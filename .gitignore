@@ -1,0 +1,26 @@
+# 环境与密钥
+.env
+.env.*
+!.env.example
+
+# 备份文件
+backups/
+*.dump
+*.sql.gz
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/.vite/
+
+# Go
+backend/coverage.out
+backend/tmp/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

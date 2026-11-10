@@ -1,0 +1,77 @@
+name: xiwei-space
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-xiwei}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请先在 .env 中设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-xiwei}
+    volumes:
+      - xiwei_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    # 数据库不暴露到宿主机网络，仅通过 compose 内部网络访问
+    networks:
+      - internal
+
+  api:
+    build:
+      context: ./backend
+    environment: &backend_env
+      DATABASE_URL: postgres://${POSTGRES_USER:-xiwei}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-xiwei}?sslmode=disable
+      ADDR: :8080
+      APP_ENV: production
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
+      SEED_ON_START: "true"
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - internal
+
+  worker:
+    build:
+      context: ./backend
+    command: ["/app/worker"]
+    environment: *backend_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+
+  web:
+    build:
+      context: ./frontend
+    ports:
+      - "${WEB_PORT:-8088}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+
+volumes:
+  xiwei_pgdata:
+
+networks:
+  internal:
+    driver: bridge
