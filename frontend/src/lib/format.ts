@@ -174,6 +174,7 @@ export const jobStatusLabels: Record<string, string> = {
   queued: '排队中',
   running: '采集中',
   success: '成功',
+  partial: '部分成功',
   failed: '失败',
   skipped: '已跳过',
 }

@@ -10,35 +10,51 @@ import (
 	"xiweispace/backend/internal/store"
 )
 
+const heartbeatInterval = 30 * time.Second
+
 type Processor struct {
-	Store *store.Store
+	Store    *store.Store
+	WorkerID string
 }
 
 func (p *Processor) Run(parent context.Context, job models.Job, source models.Source) {
+	started := time.Now()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
 
-	log := slog.With("job_id", job.ID, "source", source.Name)
+	stopHeartbeat := p.startHeartbeat(job.ID)
+	defer stopHeartbeat()
+
+	log := slog.With("worker_id", p.WorkerID, "task_type", "collection",
+		"job_id", job.ID, "source_id", source.ID, "source", source.Name)
+	duration := func() string { return time.Since(started).Round(time.Millisecond).String() }
+
+	fail := func(message string) {
+		if err := p.Store.CompleteJob(context.Background(), job.ID, source.ID, 0, 0, 0, 0, message, true); err != nil {
+			log.Error("complete failed collection job", "error", err)
+		}
+		log.Error("task execution failed", "status", "failed", "duration", duration(),
+			"success_count", 0, "failure_count", 0, "error", message)
+	}
+
 	adapter, err := NewAdapter(source)
 	if err != nil {
-		log.Error("adapter unavailable", "error", err)
-		_ = p.Store.CompleteJob(context.Background(), job.ID, source.ID, 0, 0, 0, 0, err.Error(), true)
+		fail("adapter unavailable: " + err.Error())
 		return
 	}
 	if err := adapter.Validate(); err != nil {
-		_ = p.Store.CompleteJob(context.Background(), job.ID, source.ID, 0, 0, 0, 0, err.Error(), true)
+		fail("adapter invalid: " + err.Error())
 		return
 	}
 	items, _, err := adapter.Fetch(ctx, "")
 	if err != nil {
-		log.Warn("collection failed", "error", err)
-		_ = p.Store.CompleteJob(context.Background(), job.ID, source.ID, 0, 0, 0, 0, err.Error(), true)
+		log.Warn("collection fetch failed", "error", err)
+		fail(err.Error())
 		return
 	}
 	rules, err := p.Store.ListRules(ctx)
 	if err != nil {
-		log.Error("load classification rules", "error", err)
-		_ = p.Store.CompleteJob(context.Background(), job.ID, source.ID, len(items), 0, 0, 0, "加载分类规则失败: "+err.Error(), true)
+		fail("加载分类规则失败: " + err.Error())
 		return
 	}
 
@@ -108,12 +124,49 @@ func (p *Processor) Run(parent context.Context, job models.Job, source models.So
 	}
 
 	errMsg := ""
+	status := "success"
 	if failed > 0 {
 		errMsg = "部分条目处理失败: " + strings.Join(itemErrors, "; ")
+		if len(itemErrors) == 0 {
+			errMsg = "部分条目缺少必要字段，已跳过"
+		}
+		status = "partial"
 	}
 	if err := p.Store.CompleteJob(context.Background(), job.ID, source.ID, fetched, inserted, duplicates, failed, errMsg, false); err != nil {
 		log.Error("complete job", "error", err)
 		return
 	}
-	log.Info("collection finished", "fetched", fetched, "inserted", inserted, "duplicates", duplicates, "failed", failed)
+	log.Info("collection finished", "status", status,
+		"fetched", fetched, "inserted", inserted, "duplicates", duplicates, "failed", failed,
+		"success_count", inserted, "failure_count", failed, "duration", duration())
+}
+
+func (p *Processor) startHeartbeat(jobID string) func() {
+	return startHeartbeat(p.WorkerID, "collection", func(ctx context.Context) error {
+		return p.Store.HeartbeatJob(ctx, jobID)
+	})
+}
+
+// startHeartbeat refreshes the task lease while it is running. The returned
+// stop function must be called before the task is completed.
+func startHeartbeat(workerID, taskType string, beat func(context.Context) error) func() {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				err := beat(ctx)
+				cancel()
+				if err != nil {
+					slog.Warn("task heartbeat failed", "worker_id", workerID, "task_type", taskType, "error", err)
+				}
+			}
+		}
+	}()
+	return func() { close(done) }
 }

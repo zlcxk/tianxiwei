@@ -32,6 +32,9 @@
 - SourceAdapter 抽象；RSS 适配器 + 人工录入来源
 - SearchProvider 抽象；必应网页搜索 RSS + 可选 SearXNG，搜索任务持久化与运行记录
 - Web Metadata Adapter：解析标题、描述、OG、作者、发布时间，失败保留搜索摘要与原始链接
+- 任务调度：采集与搜索交替优先领取，最大并发 2；任务心跳与按类型区分的超时回收（采集 8 分钟 / 搜索 10 分钟）
+- 任务终态包含 `success` / `partial` / `failed`，超时、panic、关联数据缺失均写入明确错误信息
+- 结构化 Worker 日志包含 `worker_id`、`task_type`、任务 ID、耗时、处理计数与错误
 - 规范化、URL 去重、来源条目去重、内容指纹去重
 - 发布时间 / 发现时间 / 入库时间分离，发布时间精度为 `verified` / `estimated` / `unknown`
 - 主时间线按 `COALESCE(published_at, discovered_at)` 倒序，游标分页稳定翻页
@@ -68,6 +71,8 @@
    ```
 
    首次启动会自动执行数据库迁移和经过核验的种子数据。
+
+   > `worker` 服务通过 `command: ["/app/worker"]` 选择 Worker 二进制。镜像默认命令必须是 `CMD ["/app/api"]`；如果改成 `ENTRYPOINT ["/app/api"]`，worker 容器会实际启动 API，采集与搜索任务将一直停留在排队中。修改镜像或升级代码后请执行 `docker compose up -d --build`，确保 API 与 Worker 使用同一镜像版本。
 
 3. 创建首个管理员：
 
@@ -127,7 +132,7 @@ cd frontend && npm run build
 
 # 可选：针对一次性测试库运行采集、时间线与事件集成测试（会写入并清理测试数据）
 TEST_DATABASE_URL='postgres://xiwei:xiwei_dev@localhost:5433/xiwei_test?sslmode=disable' \
-  go test ./internal/store -run 'TestInsertCollectedIntegration|TestDiscoveryTimelineIntegration' -v
+  go test ./internal/store -run 'TestInsertCollectedIntegration|TestDiscoveryTimelineIntegration|TestJobLifecycleReliabilityIntegration' -v
 
 # 可选：真实必应搜索连通性测试（会访问公网）
 TEST_LIVE_SEARCH=1 go test ./internal/discovery -run TestBingLive -v

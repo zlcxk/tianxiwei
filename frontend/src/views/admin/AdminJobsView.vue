@@ -13,7 +13,7 @@ const jobs = ref<Job[]>([])
 const loading = ref(true)
 const refreshing = ref(false)
 const error = ref('')
-const filter = ref<'all' | 'queued' | 'running' | 'success' | 'failed'>('all')
+const filter = ref<'all' | 'queued' | 'running' | 'success' | 'partial' | 'failed'>('all')
 const retrying = ref('')
 const autoRefresh = ref(true)
 let timer: ReturnType<typeof setInterval> | undefined
@@ -23,6 +23,7 @@ const tabs: { value: typeof filter.value; label: string }[] = [
   { value: 'queued', label: '排队中' },
   { value: 'running', label: '采集中' },
   { value: 'success', label: '成功' },
+  { value: 'partial', label: '部分成功' },
   { value: 'failed', label: '失败' },
 ]
 
@@ -46,6 +47,7 @@ function duration(job: Job): string {
 
 const statusTone: Record<string, string> = {
   success: 'text-moss border-moss/30 bg-moss/10',
+  partial: 'text-[#8a6a32] border-[#b99a5e]/30 bg-[#f3ead7]',
   failed: 'text-accent border-accent/30 bg-blush/40',
   running: 'text-[#8a6a32] border-[#b99a5e]/30 bg-[#f3ead7]',
   queued: 'text-muted border-line bg-white',

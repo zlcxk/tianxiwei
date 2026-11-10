@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -197,15 +198,32 @@ func (s *Store) CreateDueJobs(ctx context.Context) (int, error) {
 	return int(tag.RowsAffected()), nil
 }
 
+// staleJobThreshold is well above the 3-minute execution context in Processor,
+// so a live task is never reclaimed while it can still be running. Heartbeats
+// are refreshed every 30 seconds; a crashed worker's jobs become reclaimable
+// after this window.
+const staleJobThreshold = 8 * time.Minute
+
 func (s *Store) RecoverStaleJobs(ctx context.Context) (int, error) {
 	tag, err := s.Pool.Exec(ctx, `
 		UPDATE collection_jobs SET status='failed', finished_at=now(),
-			error_message='任务超时，已由调度器回收'
-		WHERE status='running' AND started_at < now() - interval '15 minutes'`)
+			error_message='任务心跳超时（超过 8 分钟未更新），已由调度器回收'
+		WHERE status='running' AND COALESCE(heartbeat_at, started_at) < now() - ($1 * interval '1 minute')`,
+		int(staleJobThreshold.Minutes()))
 	if err != nil {
 		return 0, err
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// HeartbeatJob marks a claimed collection job as still alive. Errors are
+// returned so the caller can log them; a failed heartbeat leaves the previous
+// timestamp in place rather than corrupting the task state.
+func (s *Store) HeartbeatJob(ctx context.Context, jobID string) error {
+	_, err := s.Pool.Exec(ctx, `
+		UPDATE collection_jobs SET heartbeat_at=now()
+		WHERE id=$1::uuid AND status='running'`, jobID)
+	return err
 }
 
 func (s *Store) ClaimJob(ctx context.Context) (models.Job, models.Source, error) {
@@ -215,27 +233,46 @@ func (s *Store) ClaimJob(ctx context.Context) (models.Job, models.Source, error)
 			SELECT id FROM collection_jobs WHERE status='queued'
 			ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED
 		)
-		UPDATE collection_jobs j SET status='running', started_at=now()
+		UPDATE collection_jobs j SET status='running', started_at=now(), heartbeat_at=now()
 		FROM next WHERE j.id=next.id
 		RETURNING j.id, j.source_id`).Scan(&jobID, &sourceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.Job{}, models.Source{}, ErrNotFound
 	}
 	if err != nil {
-		return models.Job{}, models.Source{}, err
+		return models.Job{}, models.Source{}, fmt.Errorf("claim collection job: %w", err)
 	}
 	job, err := s.GetJob(ctx, jobID)
 	if err != nil {
-		return models.Job{}, models.Source{}, err
+		s.failClaimedJob(jobID, "领取后读取任务失败: "+err.Error())
+		return models.Job{}, models.Source{}, fmt.Errorf("load claimed collection job %s: %w", jobID, err)
 	}
 	src, err := s.GetSource(ctx, sourceID)
-	return job, src, err
+	if err != nil {
+		s.failClaimedJob(jobID, "领取后读取来源失败: "+err.Error())
+		return models.Job{}, models.Source{}, fmt.Errorf("load source %s for claimed job %s: %w", sourceID, jobID, err)
+	}
+	return job, src, nil
+}
+
+// failClaimedJob closes a job that was moved to running but whose related data
+// could not be loaded. This prevents a broken relation from leaving the task
+// stuck in running until stale recovery.
+func (s *Store) failClaimedJob(jobID, message string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = s.Pool.Exec(ctx, `
+		UPDATE collection_jobs SET status='failed', finished_at=now(), error_message=$2
+		WHERE id=$1::uuid AND status='running'`, jobID, message)
 }
 
 func (s *Store) CompleteJob(ctx context.Context, jobID, sourceID string, fetched, inserted, duplicates, failed int, errMsg string, jobFailed bool) error {
 	status := "success"
-	if jobFailed {
+	switch {
+	case jobFailed:
 		status = "failed"
+	case failed > 0:
+		status = "partial"
 	}
 	return s.withTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
@@ -392,14 +429,16 @@ func (s *Store) GetOverview(ctx context.Context) (Overview, error) {
 	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM sources WHERE enabled=true AND last_error <> ''`).Scan(&o.SourceErrors); err != nil {
 		return o, err
 	}
-	var success, failed int
+	var success, failed, partial int
 	if err := s.Pool.QueryRow(ctx, `
-		SELECT count(*) FILTER (WHERE status='success'), count(*) FILTER (WHERE status='failed')
-		FROM collection_jobs WHERE created_at >= now() - interval '7 days'`).Scan(&success, &failed); err != nil {
+		SELECT count(*) FILTER (WHERE status='success'),
+		       count(*) FILTER (WHERE status='failed'),
+		       count(*) FILTER (WHERE status='partial')
+		FROM collection_jobs WHERE created_at >= now() - interval '7 days'`).Scan(&success, &failed, &partial); err != nil {
 		return o, err
 	}
-	if success+failed > 0 {
-		o.SuccessRate = float64(success) / float64(success+failed)
+	if success+failed+partial > 0 {
+		o.SuccessRate = float64(success) / float64(success+failed+partial)
 	}
 	jobs, err := s.ListJobs(ctx, 8, "")
 	if err != nil {

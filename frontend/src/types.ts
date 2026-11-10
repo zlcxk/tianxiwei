@@ -187,7 +187,7 @@ export interface Job {
   id: string
   source_id: string
   source_name: string
-  status: 'queued' | 'running' | 'success' | 'failed' | 'skipped'
+  status: 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'skipped'
   trigger_type: string
   started_at: string | null
   finished_at: string | null
@@ -296,7 +296,7 @@ export interface SearchRun {
   id: string
   task_id: string
   task_name: string
-  status: 'queued' | 'running' | 'success' | 'failed'
+  status: 'queued' | 'running' | 'success' | 'partial' | 'failed'
   trigger_type: string
   started_at: string | null
   finished_at: string | null

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import {
+  AlertTriangle,
   CheckCircle2,
   Database,
   Pencil,
@@ -308,6 +309,8 @@ function runTone(status: string): string {
   switch (status) {
     case 'success':
       return 'border-moss/30 bg-moss/10 text-moss'
+    case 'partial':
+      return 'border-[#b99a5e]/30 bg-[#f3ead7] text-[#8a6a32]'
     case 'failed':
       return 'border-accent/30 bg-blush/40 text-accent'
     case 'running':
@@ -321,7 +324,17 @@ const runStatusLabels: Record<string, string> = {
   queued: '排队中',
   running: '搜索中',
   success: '成功',
+  partial: '部分成功',
   failed: '失败',
+}
+
+function runDuration(run: SearchRun): string {
+  if (!run.started_at) return '—'
+  const end = run.finished_at ? new Date(run.finished_at).getTime() : Date.now()
+  const start = new Date(run.started_at).getTime()
+  if (Number.isNaN(start) || Number.isNaN(end)) return '—'
+  const seconds = Math.max(0, Math.round((end - start) / 1000))
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
 onMounted(load)
@@ -507,6 +520,7 @@ onMounted(load)
                 <td class="px-3 py-2.5">
                   <span class="inline-flex items-center gap-1 border px-1.5 py-0.5" :class="runTone(run.status)">
                     <CheckCircle2 v-if="run.status === 'success'" class="h-2.5 w-2.5" />
+                    <AlertTriangle v-else-if="run.status === 'partial'" class="h-2.5 w-2.5" />
                     <XCircle v-else-if="run.status === 'failed'" class="h-2.5 w-2.5" />
                     {{ runStatusLabels[run.status] || run.status }}
                   </span>
@@ -521,6 +535,7 @@ onMounted(load)
                 <td class="px-3 py-2.5 text-muted">
                   <div>{{ run.started_at ? formatDateTime(run.started_at) : '—' }}</div>
                   <div class="text-[9px]">{{ run.finished_at ? formatDateTime(run.finished_at) : '—' }}</div>
+                  <div class="text-[9px] text-muted/80">耗时 {{ runDuration(run) }}</div>
                 </td>
               </tr>
             </tbody>

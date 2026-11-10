@@ -380,27 +380,45 @@ func (s *Store) ClaimSearchRun(ctx context.Context) (models.SearchRun, models.Se
 			SELECT id FROM search_runs WHERE status='queued'
 			ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED
 		)
-		UPDATE search_runs r SET status='running', started_at=now()
+		UPDATE search_runs r SET status='running', started_at=now(), heartbeat_at=now()
 		FROM next WHERE r.id=next.id
 		RETURNING r.id, r.task_id`).Scan(&runID, &taskID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.SearchRun{}, models.SearchTask{}, ErrNotFound
 	}
 	if err != nil {
-		return models.SearchRun{}, models.SearchTask{}, err
+		return models.SearchRun{}, models.SearchTask{}, fmt.Errorf("claim search run: %w", err)
 	}
 	run, err := s.GetSearchRun(ctx, runID)
 	if err != nil {
-		return models.SearchRun{}, models.SearchTask{}, err
+		s.failClaimedSearchRun(runID, "领取后读取运行记录失败: "+err.Error())
+		return models.SearchRun{}, models.SearchTask{}, fmt.Errorf("load claimed search run %s: %w", runID, err)
 	}
 	task, err := s.GetSearchTask(ctx, taskID)
-	return run, task, err
+	if err != nil {
+		s.failClaimedSearchRun(runID, "领取后读取搜索任务失败: "+err.Error())
+		return models.SearchRun{}, models.SearchTask{}, fmt.Errorf("load search task %s for claimed run %s: %w", taskID, runID, err)
+	}
+	return run, task, nil
+}
+
+// failClaimedSearchRun closes a run whose related task could not be loaded, so
+// it cannot remain running until stale recovery.
+func (s *Store) failClaimedSearchRun(runID, message string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = s.Pool.Exec(ctx, `
+		UPDATE search_runs SET status='failed', finished_at=now(), error_message=$2
+		WHERE id=$1::uuid AND status='running'`, runID, message)
 }
 
 func (s *Store) CompleteSearchRun(ctx context.Context, runID, taskID string, fetched, inserted, duplicates, failed, parsedOK, parseFailed int, errMsg string, runFailed bool) error {
 	status := "success"
-	if runFailed {
+	switch {
+	case runFailed:
 		status = "failed"
+	case failed > 0:
+		status = "partial"
 	}
 	return s.withTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
@@ -424,21 +442,36 @@ func (s *Store) CompleteSearchRun(ctx context.Context, runID, taskID string, fet
 	})
 }
 
+// staleSearchThreshold is higher than the collection threshold because a
+// search run may scan up to five result pages and fetch metadata for each
+// candidate. It still sits above the 3-minute execution context, so a live
+// run is never reclaimed. Heartbeats are refreshed every 30 seconds.
+const staleSearchThreshold = 10 * time.Minute
+
 func (s *Store) RecoverStaleSearchRuns(ctx context.Context) (int, error) {
 	tag, err := s.Pool.Exec(ctx, `
 		WITH stale AS (
 			UPDATE search_runs SET status='failed', finished_at=now(),
-				error_message='搜索任务超时，已由调度器回收'
-			WHERE status='running' AND started_at < now() - interval '15 minutes'
+				error_message='搜索任务心跳超时（超过 10 分钟未更新），已由调度器回收'
+			WHERE status='running' AND COALESCE(heartbeat_at, started_at) < now() - ($1 * interval '1 minute')
 			RETURNING task_id
 		)
 		UPDATE search_tasks t SET last_run_at=now(), last_failure_at=now(),
-			last_error='搜索任务超时，已由调度器回收', updated_at=now()
-		FROM stale WHERE t.id=stale.task_id`)
+			last_error='搜索任务心跳超时（超过 10 分钟未更新），已由调度器回收', updated_at=now()
+		FROM stale WHERE t.id=stale.task_id`,
+		int(staleSearchThreshold.Minutes()))
 	if err != nil {
 		return 0, err
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+// HeartbeatSearchRun marks a claimed search run as still alive.
+func (s *Store) HeartbeatSearchRun(ctx context.Context, runID string) error {
+	_, err := s.Pool.Exec(ctx, `
+		UPDATE search_runs SET heartbeat_at=now()
+		WHERE id=$1::uuid AND status='running'`, runID)
+	return err
 }
 
 type DiscoveredContent struct {

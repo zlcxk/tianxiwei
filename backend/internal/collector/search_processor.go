@@ -14,8 +14,9 @@ import (
 )
 
 type SearchProcessor struct {
-	Store   *store.Store
-	Fetcher *discovery.MetadataFetcher
+	Store    *store.Store
+	Fetcher  *discovery.MetadataFetcher
+	WorkerID string
 }
 
 func NewSearchProcessor(s *store.Store) *SearchProcessor {
@@ -23,31 +24,50 @@ func NewSearchProcessor(s *store.Store) *SearchProcessor {
 }
 
 func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task models.SearchTask) {
+	started := time.Now()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
 	defer cancel()
 
-	log := slog.With("search_run_id", run.ID, "task", task.Name)
+	stopHeartbeat := startHeartbeat(p.WorkerID, "search", func(ctx context.Context) error {
+		return p.Store.HeartbeatSearchRun(ctx, run.ID)
+	})
+	defer stopHeartbeat()
+
+	log := slog.With("worker_id", p.WorkerID, "task_type", "search",
+		"run_id", run.ID, "search_task_id", task.ID, "task", task.Name)
+	duration := func() string { return time.Since(started).Round(time.Millisecond).String() }
+
+	fail := func(message string) {
+		log.Warn("search run failed", "error", message)
+		if err := p.Store.CompleteSearchRun(context.Background(), run.ID, task.ID,
+			0, 0, 0, 0, 0, 0, message, true); err != nil {
+			log.Error("complete failed search run", "error", err)
+		}
+		log.Error("task execution failed", "status", "failed", "duration", duration(),
+			"success_count", 0, "failure_count", 0, "error", message)
+	}
+
 	providerModel, err := p.Store.GetSearchProvider(ctx, task.ProviderID)
 	if err != nil {
-		p.fail(context.Background(), run, task, "读取搜索服务失败: "+err.Error(), log)
+		fail("读取搜索服务失败: " + err.Error())
 		return
 	}
 	if !providerModel.Enabled {
-		p.fail(context.Background(), run, task, "搜索服务已停用", log)
+		fail("搜索服务已停用")
 		return
 	}
 	provider, err := discovery.NewSearchProvider(providerModel)
 	if err != nil {
-		p.fail(context.Background(), run, task, err.Error(), log)
+		fail(err.Error())
 		return
 	}
 	if err := provider.Validate(); err != nil {
-		p.fail(context.Background(), run, task, err.Error(), log)
+		fail(err.Error())
 		return
 	}
 	rules, err := p.Store.ListRules(ctx)
 	if err != nil {
-		p.fail(context.Background(), run, task, "加载分类规则失败: "+err.Error(), log)
+		fail("加载分类规则失败: " + err.Error())
 		return
 	}
 
@@ -73,7 +93,7 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 		})
 		if err != nil {
 			if page == 1 {
-				p.fail(context.Background(), run, task, "搜索失败: "+err.Error(), log)
+				fail("搜索失败: " + err.Error())
 				return
 			}
 			log.Warn("search page failed", "page", page, "error", err)
@@ -245,26 +265,23 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 	}
 
 	errMsg := ""
+	status := "success"
 	if failed > 0 {
 		errMsg = "部分搜索结果处理失败: " + strings.Join(itemErrors, "; ")
 		if len(itemErrors) == 0 {
 			errMsg = "部分搜索结果缺少标题、链接或处理超时"
 		}
+		status = "partial"
 	}
 	if err := p.Store.CompleteSearchRun(context.Background(), run.ID, task.ID,
 		fetched, inserted, duplicates, failed, parsedOK, parseFailed, errMsg, false); err != nil {
 		log.Error("complete search run", "error", err)
 		return
 	}
-	log.Info("search finished", "fetched", fetched, "inserted", inserted, "duplicates", duplicates,
-		"failed", failed, "metadata_ok", parsedOK, "metadata_failed", parseFailed)
-}
-
-func (p *SearchProcessor) fail(ctx context.Context, run models.SearchRun, task models.SearchTask, message string, log *slog.Logger) {
-	log.Warn("search run failed", "error", message)
-	if err := p.Store.CompleteSearchRun(ctx, run.ID, task.ID, 0, 0, 0, 0, 0, 0, message, true); err != nil {
-		log.Error("complete failed search run", "error", err)
-	}
+	log.Info("search finished", "status", status,
+		"fetched", fetched, "inserted", inserted, "duplicates", duplicates,
+		"failed", failed, "metadata_ok", parsedOK, "metadata_failed", parseFailed,
+		"success_count", inserted, "failure_count", failed, "duration", duration())
 }
 
 func searchContentType(inferred, originType string) string {
