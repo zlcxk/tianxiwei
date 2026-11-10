@@ -1,5 +1,10 @@
+# 1. 基础镜像：如拉取困难，可改用国内同步源（示例见下方说明）
 FROM golang:1.26-alpine AS build
 WORKDIR /src
+
+# 2. 配置 Go 模块代理（国内加速核心）
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOSUMDB=sum.golang.google.cn
 
 COPY go.mod go.sum ./
 RUN go mod download
@@ -9,7 +14,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./c
  && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates tzdata \
+
+# 3. 替换 Alpine 软件源为国内镜像，加速 apk add
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories \
+ && apk add --no-cache ca-certificates tzdata \
  && addgroup -S xiwei \
  && adduser -S -G xiwei -h /app xiwei
 
