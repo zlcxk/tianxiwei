@@ -3,8 +3,21 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, ArrowLeft, Search, SlidersHorizontal, X } from 'lucide-vue-next'
 import { api } from '../api/client'
-import type { Character, CharacterDetail, Content, Paged, Scene, Work, WorkDetail } from '../types'
-import { contentTypeLabels, sourceTypeLabels } from '../lib/format'
+import type {
+  Character,
+  CharacterDetail,
+  Content,
+  ContentFacets,
+  Paged,
+  Scene,
+  Work,
+  WorkDetail,
+} from '../types'
+import {
+  sourceTypeLabels,
+  timelineCategories,
+  type TimelineCategoriesItem,
+} from '../lib/format'
 import ContentCard from '../components/ContentCard.vue'
 import EmptyState from '../components/EmptyState.vue'
 import LoadingBlock from '../components/LoadingBlock.vue'
@@ -20,10 +33,10 @@ function queryString(key: string): string {
 }
 
 const keyword = ref(queryString('keyword'))
-const sort = ref<'latest' | 'recommended'>(queryString('sort') === 'recommended' ? 'recommended' : 'latest')
+const category = ref(queryString('category') || 'all')
 const selectedScenes = ref<string[]>(queryString('scene') ? queryString('scene').split(',').filter(Boolean) : [])
-const contentType = ref(queryString('content_type'))
 const sourceType = ref(queryString('source_type'))
+const platform = ref(queryString('platform'))
 const range = ref(queryString('range'))
 const workId = ref(queryString('work_id'))
 const characterId = ref(queryString('character_id'))
@@ -31,32 +44,30 @@ const contextWork = ref<Work | null>(null)
 const contextCharacter = ref<Character | null>(null)
 
 const scenes = ref<Scene[]>([])
+const facets = ref<ContentFacets>({ platforms: [], content_types: [], source_types: [] })
 const items = ref<Content[]>([])
 const total = ref(0)
-const page = ref(1)
+const nextCursor = ref('')
 const pageSize = 12
 const loading = ref(true)
 const loadingMore = ref(false)
 const error = ref('')
 const filterOpen = ref(false)
 
-const draftContentType = ref('')
 const draftSourceType = ref('')
+const draftPlatform = ref('')
 const draftRange = ref('')
+const draftScenes = ref<string[]>([])
 
-const hasMore = computed(() => items.value.length < total.value)
-const activeFilterCount = computed(
-  () => [contentType.value, sourceType.value, range.value].filter(Boolean).length + (selectedScenes.value.length ? 1 : 0),
+const activeCategory = computed<TimelineCategoriesItem>(
+  () => timelineCategories.find((c) => c.key === category.value) ?? timelineCategories[0],
 )
-const activeSceneNames = computed(() => {
-  if (!selectedScenes.value.length) return '全部场景'
-  return (
-    scenes.value
-      .filter((s) => selectedScenes.value.includes(s.code))
-      .map((s) => s.name)
-      .join(' · ') || '已选场景'
-  )
-})
+const hasMore = computed(() => Boolean(nextCursor.value))
+const activeFilterCount = computed(
+  () =>
+    [category.value !== 'all' ? category.value : '', sourceType.value, platform.value, range.value].filter(Boolean).length +
+    (selectedScenes.value.length ? 1 : 0),
+)
 const hasContext = computed(() => Boolean(workId.value || characterId.value))
 const contextLabel = computed(() => {
   if (contextCharacter.value) {
@@ -80,15 +91,18 @@ const rangeOptions = [
   { value: '90d', label: '近 90 天' },
 ]
 
-function buildParams(nextPage: number): string {
+function buildParams(cursor: string): string {
   const params = new URLSearchParams()
-  params.set('sort', sort.value)
-  params.set('page', String(nextPage))
+  params.set('sort', 'latest')
   params.set('page_size', String(pageSize))
+  if (cursor) params.set('cursor', cursor)
   if (keyword.value.trim()) params.set('keyword', keyword.value.trim())
-  if (selectedScenes.value.length) params.set('scene', selectedScenes.value.join(','))
-  if (contentType.value) params.set('content_type', contentType.value)
+  const types = activeCategory.value.types
+  if (types?.length) params.set('content_type', types.join(','))
+  const sceneCodes = [...(activeCategory.value.scene ? [activeCategory.value.scene] : []), ...selectedScenes.value]
+  if (sceneCodes.length) params.set('scene', [...new Set(sceneCodes)].join(','))
   if (sourceType.value) params.set('source_type', sourceType.value)
+  if (platform.value) params.set('source', platform.value)
   if (range.value) params.set('range', range.value)
   if (workId.value) params.set('work_id', workId.value)
   if (characterId.value) params.set('character_id', characterId.value)
@@ -98,10 +112,10 @@ function buildParams(nextPage: number): string {
 function syncURL() {
   const query: Record<string, string> = {}
   if (keyword.value.trim()) query.keyword = keyword.value.trim()
-  if (sort.value !== 'latest') query.sort = sort.value
+  if (category.value !== 'all') query.category = category.value
   if (selectedScenes.value.length) query.scene = selectedScenes.value.join(',')
-  if (contentType.value) query.content_type = contentType.value
   if (sourceType.value) query.source_type = sourceType.value
+  if (platform.value) query.platform = platform.value
   if (range.value) query.range = range.value
   if (workId.value) query.work_id = workId.value
   if (characterId.value) query.character_id = characterId.value
@@ -110,16 +124,18 @@ function syncURL() {
 
 async function load(reset = true) {
   if (reset) {
-    page.value = 1
+    nextCursor.value = ''
     loading.value = true
     error.value = ''
   } else {
     loadingMore.value = true
   }
   try {
-    const data = await api.get<Paged<Content>>(`/contents?${buildParams(page.value)}`)
+    const cursor = reset ? '' : nextCursor.value
+    const data = await api.get<Paged<Content>>(`/contents?${buildParams(cursor)}`)
     items.value = reset ? data.items : [...items.value, ...data.items]
     total.value = data.total
+    nextCursor.value = data.next_cursor || ''
   } catch (err) {
     error.value = err instanceof Error ? err.message : '内容加载失败'
   } finally {
@@ -130,50 +146,44 @@ async function load(reset = true) {
 
 async function loadMore() {
   if (loadingMore.value || !hasMore.value) return
-  page.value += 1
   await load(false)
 }
 
-async function toggleScene(code: string) {
-  selectedScenes.value = selectedScenes.value.includes(code)
-    ? selectedScenes.value.filter((c) => c !== code)
-    : [...selectedScenes.value, code]
+async function selectCategory(key: string) {
+  if (category.value === key) return
+  category.value = key
   syncURL()
   await load()
 }
 
-async function clearScenes() {
-  selectedScenes.value = []
-  syncURL()
-  await load()
-}
-
-function setSort(value: 'latest' | 'recommended') {
-  if (sort.value === value) return
-  sort.value = value
-  syncURL()
-  load()
+function toggleDraftScene(code: string) {
+  draftScenes.value = draftScenes.value.includes(code)
+    ? draftScenes.value.filter((c) => c !== code)
+    : [...draftScenes.value, code]
 }
 
 function openFilters() {
-  draftContentType.value = contentType.value
   draftSourceType.value = sourceType.value
+  draftPlatform.value = platform.value
   draftRange.value = range.value
+  draftScenes.value = [...selectedScenes.value]
   filterOpen.value = true
 }
 
 async function applyFilters() {
-  contentType.value = draftContentType.value
   sourceType.value = draftSourceType.value
+  platform.value = draftPlatform.value
   range.value = draftRange.value
+  selectedScenes.value = [...draftScenes.value]
   filterOpen.value = false
   syncURL()
   await load()
 }
 
 async function clearFilters() {
-  contentType.value = ''
+  category.value = 'all'
   sourceType.value = ''
+  platform.value = ''
   range.value = ''
   selectedScenes.value = []
   workId.value = ''
@@ -231,33 +241,39 @@ onMounted(async () => {
   } catch {
     scenes.value = []
   }
+  try {
+    facets.value = await api.get<ContentFacets>('/contents/facets')
+  } catch {
+    facets.value = { platforms: [], content_types: [], source_types: [] }
+  }
 })
 </script>
 
 <template>
   <div class="shell pb-16 pt-8 md:pb-24 md:pt-12">
     <header class="mb-7 md:mb-10">
-      <div class="eyebrow mb-3">Discover</div>
+      <div class="eyebrow mb-3">Discover / Timeline</div>
       <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 class="display-title text-[36px] md:text-[48px]">发现</h1>
-          <p class="mt-2 text-sm text-muted">按场景筛选公开动态，找到此刻最想看的内容。</p>
+          <p class="mt-2 max-w-xl text-sm leading-6 text-muted">
+            按原始发布时间排列的全部公开动态。时间不明的内容会标注发现时间，不伪造发布时间。
+          </p>
         </div>
         <div class="flex items-center gap-2 text-[11px] text-muted">
           <span class="h-1 w-1 rounded-full bg-moss" />
-          内容经审核后公开 · 共 {{ total }} 条
+          经核验后公开 · 共 {{ total }} 条
         </div>
       </div>
     </header>
 
-    <!-- Search -->
     <div class="relative">
       <Search class="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
       <input
         v-model="keyword"
         type="search"
         class="field !py-3.5 pl-11 pr-11 text-[13px]"
-        placeholder="搜索作品、角色、活动或关键词"
+        placeholder="搜索标题、来源或关键词"
         aria-label="搜索内容"
       />
       <button
@@ -270,7 +286,6 @@ onMounted(async () => {
       </button>
     </div>
 
-    <!-- Context: work or character -->
     <div
       v-if="hasContext"
       class="mt-4 flex items-center justify-between gap-3 border border-line bg-blush/25 px-4 py-3"
@@ -290,30 +305,20 @@ onMounted(async () => {
       </button>
     </div>
 
-    <!-- Scene chips -->
     <div class="no-scrollbar -mx-5 mt-5 flex gap-2 overflow-x-auto px-5 pb-1 md:mx-0 md:flex-wrap md:px-0">
       <button
+        v-for="cat in timelineCategories"
+        :key="cat.key"
         class="shrink-0 border px-3.5 py-2 text-[11px] transition"
-        :class="!selectedScenes.length ? 'border-ink bg-ink text-white' : 'border-line bg-white/50 text-muted hover:border-ink/25 hover:text-ink'"
-        @click="clearScenes"
-      >
-        全部
-      </button>
-      <button
-        v-for="scene in scenes.filter((s) => s.code !== 'all')"
-        :key="scene.id"
-        class="inline-flex shrink-0 items-center gap-1.5 border px-3.5 py-2 text-[11px] transition"
-        :class="selectedScenes.includes(scene.code)
-          ? 'border-accent/50 bg-blush/50 text-ink'
+        :class="category === cat.key
+          ? 'border-ink bg-ink text-white'
           : 'border-line bg-white/50 text-muted hover:border-ink/25 hover:text-ink'"
-        @click="toggleScene(scene.code)"
+        @click="selectCategory(cat.key)"
       >
-        <SceneIcon :code="scene.code" class="h-3.5 w-3.5" />
-        {{ scene.name }}
+        {{ cat.label }}
       </button>
     </div>
 
-    <!-- Toolbar -->
     <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-y border-line py-3">
       <div class="flex items-center gap-2">
         <button class="btn-ghost !min-h-9 !border-line !px-3 !py-1.5 text-[11px]" @click="openFilters">
@@ -323,35 +328,22 @@ onMounted(async () => {
             {{ activeFilterCount }}
           </span>
         </button>
-        <span class="hidden text-[11px] text-muted sm:inline">{{ activeSceneNames }}</span>
+        <span class="text-[11px] text-muted">{{ activeCategory.label }} · 按时间倒序</span>
       </div>
-      <div class="flex items-center gap-1 border border-line bg-white/40 p-0.5">
-        <button
-          class="px-3 py-1.5 text-[11px] transition"
-          :class="sort === 'latest' ? 'bg-ink text-white' : 'text-muted hover:text-ink'"
-          @click="setSort('latest')"
-        >
-          最新
-        </button>
-        <button
-          class="px-3 py-1.5 text-[11px] transition"
-          :class="sort === 'recommended' ? 'bg-ink text-white' : 'text-muted hover:text-ink'"
-          @click="setSort('recommended')"
-        >
-          为你推荐
-        </button>
-      </div>
+      <span class="text-[10px] text-muted">不按热度排序</span>
     </div>
 
-    <!-- Active filter summary -->
-    <div v-if="contentType || sourceType || range" class="mt-3 flex flex-wrap items-center gap-2">
-      <span v-if="contentType" class="tag">{{ contentTypeLabels[contentType] }}</span>
-      <span v-if="sourceType" class="tag">{{ sourceTypeLabels[sourceType] }}</span>
+    <div v-if="category !== 'all' || sourceType || platform || range || selectedScenes.length" class="mt-3 flex flex-wrap items-center gap-2">
+      <span v-if="category !== 'all'" class="tag">{{ activeCategory.label }}</span>
+      <span v-if="platform" class="tag">{{ platform }}</span>
+      <span v-if="sourceType" class="tag">{{ sourceTypeLabels[sourceType] || sourceType }}</span>
       <span v-if="range" class="tag">{{ rangeOptions.find((r) => r.value === range)?.label }}</span>
+      <span v-for="code in selectedScenes" :key="code" class="tag">
+        {{ scenes.find((s) => s.code === code)?.name || code }}
+      </span>
       <button class="text-[10px] text-muted underline underline-offset-4 hover:text-ink" @click="clearFilters">清除筛选</button>
     </div>
 
-    <!-- List -->
     <div class="mt-4 min-h-[320px]">
       <LoadingBlock v-if="loading" :rows="5" />
       <EmptyState
@@ -364,7 +356,7 @@ onMounted(async () => {
       <EmptyState
         v-else-if="!items.length"
         title="没有找到相关内容"
-        description="试试更换场景、缩短关键词，或清除筛选条件。"
+        description="试试更换分类、缩短关键词，或清除筛选条件。"
         action-label="清除筛选"
         @action="clearFilters"
       />
@@ -382,22 +374,29 @@ onMounted(async () => {
       <p v-else-if="items.length" class="mt-8 text-center text-[11px] text-muted">已经到底了 · 共 {{ total }} 条</p>
     </div>
 
-    <!-- Filter sheet -->
-    <Modal :open="filterOpen" title="筛选内容" description="组合条件，只看此刻相关的部分。" @close="filterOpen = false">
+    <Modal :open="filterOpen" title="筛选内容" description="按来源平台、时间与场景组合查看。" @close="filterOpen = false">
       <div class="space-y-7">
         <div>
-          <div class="field-label">内容类型</div>
+          <div class="field-label">来源平台</div>
           <div class="flex flex-wrap gap-2">
             <button
-              v-for="(label, key) in contentTypeLabels"
-              :key="key"
               class="border px-3 py-1.5 text-[11px] transition"
-              :class="draftContentType === key ? 'border-ink bg-ink text-white' : 'border-line bg-white text-muted hover:border-ink/25'"
-              @click="draftContentType = draftContentType === key ? '' : key"
+              :class="!draftPlatform ? 'border-ink bg-ink text-white' : 'border-line bg-white text-muted hover:border-ink/25'"
+              @click="draftPlatform = ''"
             >
-              {{ label }}
+              全部平台
+            </button>
+            <button
+              v-for="p in facets.platforms"
+              :key="p.value"
+              class="border px-3 py-1.5 text-[11px] transition"
+              :class="draftPlatform === p.value ? 'border-ink bg-ink text-white' : 'border-line bg-white text-muted hover:border-ink/25'"
+              @click="draftPlatform = draftPlatform === p.value ? '' : p.value"
+            >
+              {{ p.value }} · {{ p.count }}
             </button>
           </div>
+          <p v-if="!facets.platforms.length" class="mt-2 text-[10px] text-muted">暂无平台数据</p>
         </div>
         <div>
           <div class="field-label">来源类型</div>
@@ -414,7 +413,7 @@ onMounted(async () => {
           </div>
         </div>
         <div>
-          <div class="field-label">发布时间</div>
+          <div class="field-label">时间范围</div>
           <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
             <button
               v-for="option in rangeOptions"
@@ -424,6 +423,23 @@ onMounted(async () => {
               @click="draftRange = option.value"
             >
               {{ option.label }}
+            </button>
+          </div>
+        </div>
+        <div>
+          <div class="field-label">饭圈场景</div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="scene in scenes.filter((s) => s.code !== 'all')"
+              :key="scene.id"
+              class="inline-flex items-center gap-1.5 border px-3 py-1.5 text-[11px] transition"
+              :class="draftScenes.includes(scene.code)
+                ? 'border-accent/50 bg-blush/50 text-ink'
+                : 'border-line bg-white text-muted hover:border-ink/25'"
+              @click="toggleDraftScene(scene.code)"
+            >
+              <SceneIcon :code="scene.code" class="h-3.5 w-3.5" />
+              {{ scene.name }}
             </button>
           </div>
         </div>

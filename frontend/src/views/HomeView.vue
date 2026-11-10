@@ -4,7 +4,7 @@ import { ArrowRight, ArrowUpRight, RefreshCw, Sparkles } from 'lucide-vue-next'
 import { api } from '../api/client'
 import type { Content, HomeData } from '../types'
 import { auth } from '../stores/auth'
-import { formatDate, formatYear, relativeTime, todayLabel, workStatusLabels, workTypeLabels } from '../lib/format'
+import { contentTimeLabel, formatYear, relativeTime, todayLabel, workStatusLabels, workTypeLabels } from '../lib/format'
 import ContentCard from '../components/ContentCard.vue'
 import CoverArt from '../components/CoverArt.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -170,8 +170,8 @@ watch(() => auth.user?.id, load)
             <div class="eyebrow mb-2 flex items-center gap-1.5"><Sparkles class="h-3 w-3" /> For You</div>
             <h2 class="font-display text-2xl tracking-tight md:text-[28px]">为你挑选</h2>
           </div>
-          <RouterLink :to="{ name: 'discover', query: { sort: 'recommended' } }" class="inline-flex items-center gap-1 text-xs text-muted transition hover:text-ink">
-            更多推荐 <ArrowUpRight class="h-3 w-3" />
+          <RouterLink to="/discover" class="inline-flex items-center gap-1 text-xs text-muted transition hover:text-ink">
+            全部动态 <ArrowUpRight class="h-3 w-3" />
           </RouterLink>
         </div>
         <div v-if="forYou.length" class="grid gap-x-10 md:grid-cols-2">
@@ -207,7 +207,7 @@ watch(() => auth.user?.id, load)
               <p class="mt-4 line-clamp-3 max-w-lg text-[13px] leading-7 text-muted">{{ featured.summary }}</p>
             </div>
             <div class="mt-8 flex items-center justify-between">
-              <span class="text-[11px] text-muted">{{ formatDate(featured.published_at) }}</span>
+              <span class="text-[11px] text-muted">{{ contentTimeLabel(featured) }}</span>
               <span class="inline-flex items-center gap-1.5 text-xs text-ink">
                 阅读全文
                 <ArrowUpRight class="h-3.5 w-3.5 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />

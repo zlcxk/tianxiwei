@@ -4,6 +4,7 @@ import AdminLayout from '../views/admin/AdminLayout.vue'
 import HomeView from '../views/HomeView.vue'
 import DiscoverView from '../views/DiscoverView.vue'
 import ContentDetailView from '../views/ContentDetailView.vue'
+import EventView from '../views/EventView.vue'
 import WorksView from '../views/WorksView.vue'
 import WorkDetailView from '../views/WorkDetailView.vue'
 import CharacterDetailView from '../views/CharacterDetailView.vue'
@@ -16,6 +17,8 @@ import AdminOverviewView from '../views/admin/AdminOverviewView.vue'
 import AdminContentsView from '../views/admin/AdminContentsView.vue'
 import AdminReviewsView from '../views/admin/AdminReviewsView.vue'
 import AdminSourcesView from '../views/admin/AdminSourcesView.vue'
+import AdminDiscoveryView from '../views/admin/AdminDiscoveryView.vue'
+import AdminEventsView from '../views/admin/AdminEventsView.vue'
 import AdminJobsView from '../views/admin/AdminJobsView.vue'
 import AdminBaseDataView from '../views/admin/AdminBaseDataView.vue'
 import { auth, ensureBootstrap, isAdmin } from '../stores/auth'
@@ -35,6 +38,7 @@ const router = createRouter({
         { path: '', name: 'home', component: HomeView, meta: { title: '首页' } },
         { path: 'discover', name: 'discover', component: DiscoverView, meta: { title: '发现' } },
         { path: 'contents/:id', name: 'content', component: ContentDetailView, meta: { title: '内容详情' } },
+        { path: 'events/:id', name: 'event', component: EventView, meta: { title: '事件' } },
         { path: 'works', name: 'works', component: WorksView, meta: { title: '作品档案' } },
         { path: 'works/:id', name: 'work', component: WorkDetailView, meta: { title: '作品详情' } },
         { path: 'characters/:id', name: 'character', component: CharacterDetailView, meta: { title: '角色档案' } },
@@ -54,6 +58,8 @@ const router = createRouter({
         { path: 'contents', name: 'admin-contents', component: AdminContentsView, meta: { title: '内容管理', requiresAdmin: true } },
         { path: 'reviews', name: 'admin-reviews', component: AdminReviewsView, meta: { title: '待审核', requiresAdmin: true } },
         { path: 'sources', name: 'admin-sources', component: AdminSourcesView, meta: { title: '数据源', requiresAdmin: true } },
+        { path: 'discovery', name: 'admin-discovery', component: AdminDiscoveryView, meta: { title: '内容发现', requiresAdmin: true } },
+        { path: 'events', name: 'admin-events', component: AdminEventsView, meta: { title: '事件管理', requiresAdmin: true } },
         { path: 'jobs', name: 'admin-jobs', component: AdminJobsView, meta: { title: '采集任务', requiresAdmin: true } },
         { path: 'base', name: 'admin-base', component: AdminBaseDataView, meta: { title: '基础资料', requiresAdmin: true } },
       ],

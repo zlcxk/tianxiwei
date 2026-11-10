@@ -73,15 +73,23 @@ export interface Work {
 
 export type ContentType =
   | 'social'
+  | 'post'
+  | 'news'
   | 'drama'
   | 'variety'
   | 'media'
-  | 'topic'
+  | 'video'
+  | 'interview'
   | 'image'
   | 'fashion'
   | 'event'
+  | 'work'
+  | 'official'
+  | 'topic'
   | 'internal'
   | 'other'
+
+export type PublishedPrecision = 'verified' | 'estimated' | 'unknown'
 
 export interface Content {
   id: string
@@ -95,8 +103,19 @@ export interface Content {
   source_author: string
   source_url: string
   cover_url: string
-  published_at: string
+  published_at: string | null
+  effective_at: string
+  discovered_at: string
+  published_precision: PublishedPrecision
   collected_at: string
+  created_at: string
+  origin_name: string
+  origin_platform: string
+  origin_type: string
+  metadata_status: 'not_attempted' | 'ok' | 'failed' | 'blocked'
+  metadata_error?: string
+  search_task_id?: string
+  events: EventRef[]
   trust_level: string
   is_official: boolean
   review_status: string
@@ -210,6 +229,98 @@ export interface Paged<T> {
   page: number
   page_size: number
   total: number
+  next_cursor?: string
+}
+
+export interface EventRef {
+  id: string
+  title: string
+  event_date: string
+}
+
+export interface Event {
+  id: string
+  title: string
+  summary: string
+  cover_url: string
+  event_date: string
+  location: string
+  status: 'draft' | 'published' | 'archived'
+  content_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface EventDetail {
+  event: Event
+  contents: Content[]
+}
+
+export interface SearchProvider {
+  id: string
+  name: string
+  provider_type: 'bing_rss' | 'searxng'
+  endpoint: string
+  api_key_env: string
+  config: Record<string, unknown>
+  enabled: boolean
+  last_test_at: string | null
+  last_test_ok: boolean | null
+  last_test_error: string
+  last_latency_ms: number
+  created_at: string
+}
+
+export interface SearchTask {
+  id: string
+  name: string
+  provider_id: string
+  provider_name: string
+  query: string
+  domains: string[]
+  content_type_hint: string
+  source_type: string
+  trust_level: string
+  interval_minutes: number
+  max_results: number
+  enabled: boolean
+  last_run_at: string | null
+  last_success_at: string | null
+  last_failure_at: string | null
+  last_error: string
+  next_run_at: string
+  created_at: string
+}
+
+export interface SearchRun {
+  id: string
+  task_id: string
+  task_name: string
+  status: 'queued' | 'running' | 'success' | 'failed'
+  trigger_type: string
+  started_at: string | null
+  finished_at: string | null
+  fetched_count: number
+  inserted_count: number
+  duplicate_count: number
+  failed_count: number
+  parsed_ok_count: number
+  parse_failed_count: number
+  error_message: string
+  created_at: string
+}
+
+export interface SearchTestResult {
+  ok: boolean
+  latency_ms: number
+  result_count: number
+  message: string
+}
+
+export interface ContentFacets {
+  platforms: { value: string; label: string; count: number }[]
+  content_types: { value: string; label: string; count: number }[]
+  source_types: { value: string; label: string; count: number }[]
 }
 
 export interface SetupStatus {

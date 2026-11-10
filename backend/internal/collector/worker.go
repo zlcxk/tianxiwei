@@ -10,16 +10,18 @@ import (
 )
 
 type Worker struct {
-	Store     *store.Store
-	Processor *Processor
-	sem       chan struct{}
+	Store           *store.Store
+	Processor       *Processor
+	SearchProcessor *SearchProcessor
+	sem             chan struct{}
 }
 
 func NewWorker(s *store.Store) *Worker {
 	return &Worker{
-		Store:     s,
-		Processor: &Processor{Store: s},
-		sem:       make(chan struct{}, 2),
+		Store:           s,
+		Processor:       &Processor{Store: s},
+		SearchProcessor: NewSearchProcessor(s),
+		sem:             make(chan struct{}, 2),
 	}
 }
 
@@ -50,6 +52,16 @@ func (w *Worker) tick(ctx context.Context) {
 	} else if n > 0 {
 		slog.Info("scheduled collection jobs", "count", n)
 	}
+	if n, err := w.Store.RecoverStaleSearchRuns(ctx); err != nil {
+		slog.Warn("recover stale search runs", "error", err)
+	} else if n > 0 {
+		slog.Warn("recovered stale search runs", "count", n)
+	}
+	if n, err := w.Store.CreateDueSearchRuns(ctx); err != nil {
+		slog.Warn("schedule search runs", "error", err)
+	} else if n > 0 {
+		slog.Info("scheduled search runs", "count", n)
+	}
 
 	for i := 0; i < 2; i++ {
 		select {
@@ -58,16 +70,28 @@ func (w *Worker) tick(ctx context.Context) {
 			return
 		}
 		job, source, err := w.Store.ClaimJob(ctx)
-		if err != nil {
-			<-w.sem
-			if !errors.Is(err, store.ErrNotFound) {
-				slog.Warn("claim job", "error", err)
-			}
-			return
+		if err == nil {
+			go func() {
+				defer func() { <-w.sem }()
+				w.Processor.Run(ctx, job, source)
+			}()
+			continue
 		}
-		go func() {
-			defer func() { <-w.sem }()
-			w.Processor.Run(ctx, job, source)
-		}()
+		if !errors.Is(err, store.ErrNotFound) {
+			slog.Warn("claim job", "error", err)
+		}
+		run, task, searchErr := w.Store.ClaimSearchRun(ctx)
+		if searchErr == nil {
+			go func() {
+				defer func() { <-w.sem }()
+				w.SearchProcessor.Run(ctx, run, task)
+			}()
+			continue
+		}
+		<-w.sem
+		if !errors.Is(searchErr, store.ErrNotFound) {
+			slog.Warn("claim search run", "error", searchErr)
+		}
+		return
 	}
 }

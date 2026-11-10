@@ -15,7 +15,7 @@ import (
 var (
 	validSourceTypes     = []string{"official", "media", "community", "reference", "internal"}
 	validTrustLevels     = []string{"official", "media", "community", "reference", "internal"}
-	validContentTypes    = []string{"social", "drama", "variety", "media", "topic", "image", "fashion", "event", "internal", "other"}
+	validContentTypes    = []string{"social", "post", "news", "drama", "variety", "media", "video", "interview", "image", "fashion", "event", "work", "official", "topic", "internal", "other"}
 	validContentStatuses = []string{"pending", "reviewing", "published", "rejected", "expired", "archived"}
 	validReviewStatuses  = []string{"none", "pending", "approved", "rejected"}
 )
@@ -221,13 +221,24 @@ func (s *Server) adminReject(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminListContents(w http.ResponseWriter, r *http.Request) {
 	page, pageSize, offset := pagination(r)
 	q := r.URL.Query()
+	var contentTypes []string
+	for _, ct := range strings.Split(q.Get("content_type"), ",") {
+		if v := strings.TrimSpace(ct); v != "" {
+			contentTypes = append(contentTypes, v)
+		}
+	}
 	filter := store.ContentFilter{
 		Keyword:            strings.TrimSpace(q.Get("keyword")),
 		SourceType:         strings.TrimSpace(q.Get("source_type")),
-		ContentType:        strings.TrimSpace(q.Get("content_type")),
+		SourceQuery:        strings.TrimSpace(q.Get("source")),
+		ContentTypes:       contentTypes,
 		IncludeUnpublished: true,
 		ContentStatus:      strings.TrimSpace(q.Get("content_status")),
 		ReviewStatus:       strings.TrimSpace(q.Get("review_status")),
+		OnlyCandidates:     q.Get("candidate") == "1" || q.Get("candidate") == "true",
+		SearchTaskID:       strings.TrimSpace(q.Get("search_task_id")),
+		MetadataStatus:     strings.TrimSpace(q.Get("metadata_status")),
+		EventID:            strings.TrimSpace(q.Get("event_id")),
 		Sort:               "latest",
 		Limit:              pageSize,
 		Offset:             offset,
@@ -324,6 +335,18 @@ func (s *Server) adminUpdateContent(w http.ResponseWriter, r *http.Request) {
 	if in.ReviewStatus != nil && !isOneOf(*in.ReviewStatus, validReviewStatuses...) {
 		apiError(w, http.StatusBadRequest, "invalid_request", "审核状态不正确")
 		return
+	}
+	if in.PublishedPrecision != nil && !isOneOf(*in.PublishedPrecision, validPrecisions...) {
+		apiError(w, http.StatusBadRequest, "invalid_request", "发布时间精度不正确")
+		return
+	}
+	if in.ClearPublishedAt && in.PublishedAt != nil {
+		apiError(w, http.StatusBadRequest, "invalid_request", "不能同时设置和清除发布时间")
+		return
+	}
+	if in.PublishedAt != nil && in.PublishedPrecision == nil {
+		precision := "verified"
+		in.PublishedPrecision = &precision
 	}
 	if in.Title != nil && strings.TrimSpace(*in.Title) == "" {
 		apiError(w, http.StatusBadRequest, "invalid_request", "标题不能为空")

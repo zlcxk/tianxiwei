@@ -16,7 +16,7 @@ type RawItem struct {
 	URL          string          `json:"url"`
 	CoverURL     string          `json:"cover_url"`
 	Author       string          `json:"author"`
-	PublishedAt  time.Time       `json:"published_at"`
+	PublishedAt  *time.Time      `json:"published_at"`
 	Raw          json.RawMessage `json:"raw"`
 }
 

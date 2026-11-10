@@ -55,15 +55,74 @@ export function todayLabel(): string {
 
 export const contentTypeLabels: Record<string, string> = {
   social: '社交动态',
+  post: '社交帖子',
+  news: '新闻资讯',
   drama: '影视资讯',
   variety: '综艺',
   media: '新闻媒体',
-  topic: '热门话题',
+  video: '视频',
+  interview: '采访',
   image: '图片影像',
   fashion: '时尚商务',
   event: '公开活动',
+  work: '作品信息',
+  official: '官方公告',
+  topic: '热门话题',
   internal: '站内资料',
   other: '其他',
+}
+
+export const precisionLabels: Record<string, string> = {
+  verified: '来源明确',
+  estimated: '时间待核验',
+  unknown: '发布时间未知',
+}
+
+export interface TimelineCategoriesItem {
+  key: string
+  label: string
+  types?: string[]
+  scene?: string
+}
+
+export const timelineCategories: TimelineCategoriesItem[] = [
+  { key: 'all', label: '全部' },
+  { key: 'news', label: '新闻', types: ['news', 'media', 'official'] },
+  { key: 'post', label: '帖子', types: ['post', 'social'] },
+  { key: 'image', label: '图片', types: ['image'] },
+  { key: 'video', label: '视频', types: ['video', 'interview'] },
+  { key: 'work', label: '作品', types: ['work', 'drama', 'variety'] },
+  { key: 'event', label: '活动', types: ['event'] },
+  { key: 'daily', label: '日常', scene: 'daily' },
+  { key: 'business', label: '商务', scene: 'fashion' },
+]
+
+export function contentTimeLabel(content: {
+  published_at: string | null
+  discovered_at: string
+  published_precision: string
+}): string {
+  if (content.published_precision === 'unknown' || !content.published_at) {
+    return `发现于 ${relativeTime(content.discovered_at) || '近期'}`
+  }
+  if (content.published_precision === 'estimated') {
+    return `约 ${relativeTime(content.published_at)}`
+  }
+  return relativeTime(content.published_at)
+}
+
+export function contentDateLabel(content: {
+  published_at: string | null
+  discovered_at: string
+  published_precision: string
+}): string {
+  if (content.published_precision === 'unknown' || !content.published_at) {
+    return `发布时间未知 · 发现于 ${formatDate(content.discovered_at)}`
+  }
+  if (content.published_precision === 'estimated') {
+    return `约 ${formatDateTime(content.published_at)}（待核验）`
+  }
+  return formatDateTime(content.published_at)
 }
 
 export const workTypeLabels: Record<string, string> = {

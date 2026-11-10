@@ -12,12 +12,13 @@ import {
   X,
 } from 'lucide-vue-next'
 import { api } from '../../api/client'
-import type { Character, Content, Paged, Scene, Source, Work } from '../../types'
+import type { Character, Content, Event, Paged, Scene, Source, Work } from '../../types'
 import {
   contentStatusLabels,
   contentTypeLabels,
   formatDate,
   formatDateTime,
+  precisionLabels,
   reviewStatusLabels,
   sourceTypeLabels,
   trustLabels,
@@ -42,21 +43,40 @@ const keyword = ref('')
 const contentStatus = ref('')
 const reviewStatus = ref('')
 const contentType = ref('')
+const candidateOnly = ref(false)
+const metadataStatus = ref('')
+const editRaw = ref<unknown>(null)
 
 const sources = ref<Source[]>([])
 const scenes = ref<Scene[]>([])
 const works = ref<Work[]>([])
 const characters = ref<Character[]>([])
+const events = ref<Event[]>([])
 
 const statusOptions = Object.entries(contentStatusLabels)
 const reviewOptions = Object.entries(reviewStatusLabels)
 const typeOptions = Object.entries(contentTypeLabels)
 const trustOptions = Object.entries(trustLabels)
+const precisionOptions = Object.entries(precisionLabels)
+const metadataOptions = [
+  { value: 'not_attempted', label: '未尝试解析' },
+  { value: 'ok', label: '解析成功' },
+  { value: 'failed', label: '解析失败' },
+  { value: 'blocked', label: '被来源拦截' },
+]
 const contentStatusKeys = ['pending', 'reviewing', 'published', 'rejected', 'expired', 'archived']
 const reviewStatusKeys = ['none', 'pending', 'approved', 'rejected']
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const workTitleMap = computed(() => Object.fromEntries(works.value.map((w) => [w.id, w.title])))
+const rawPreview = computed(() => {
+  if (!editRaw.value) return ''
+  try {
+    return JSON.stringify(editRaw.value, null, 2)
+  } catch {
+    return String(editRaw.value)
+  }
+})
 
 type ManualForm = {
   title: string
@@ -67,13 +87,24 @@ type ManualForm = {
   source_url: string
   cover_url: string
   published_at: string
+  published_precision: string
+  clear_published_at: boolean
   trust_level: string
   is_official: boolean
   scene_ids: string[]
   work_ids: string[]
   character_ids: string[]
+  event_ids: string[]
   content_status: string
   review_status: string
+}
+
+function toLocalInput(value?: string | null): string {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const offset = d.getTimezoneOffset() * 60000
+  return new Date(d.getTime() - offset).toISOString().slice(0, 16)
 }
 
 function nowLocalInput(): string {
@@ -92,11 +123,14 @@ function emptyForm(): ManualForm {
     source_url: '',
     cover_url: '',
     published_at: nowLocalInput(),
+    published_precision: 'verified',
+    clear_published_at: false,
     trust_level: 'internal',
     is_official: false,
     scene_ids: [],
     work_ids: [],
     character_ids: [],
+    event_ids: [],
     content_status: 'published',
     review_status: 'approved',
   }
@@ -116,18 +150,22 @@ function openCreate() {
 
 async function openEdit(item: Content) {
   editingId.value = item.id
+  editRaw.value = null
   Object.assign(form, emptyForm(), {
     title: item.title,
     summary: item.summary,
     content_type: item.content_type,
     source_url: item.source_url,
     cover_url: item.cover_url,
-    published_at: nowLocalInput(),
+    published_at: toLocalInput(item.published_at),
+    published_precision: item.published_precision || 'unknown',
+    clear_published_at: false,
     trust_level: item.trust_level,
     is_official: item.is_official,
     scene_ids: item.scenes?.map((s) => s.id) || [],
     work_ids: item.works?.map((w) => w.id) || [],
     character_ids: item.characters?.map((c) => c.id) || [],
+    event_ids: item.events?.map((e) => e.id) || [],
     content_status: item.content_status,
     review_status: item.review_status,
   })
@@ -137,6 +175,10 @@ async function openEdit(item: Content) {
     form.scene_ids = full.scenes?.map((s) => s.id) || []
     form.work_ids = full.works?.map((w) => w.id) || []
     form.character_ids = full.characters?.map((c) => c.id) || []
+    form.event_ids = full.events?.map((e) => e.id) || []
+    form.published_at = toLocalInput(full.published_at)
+    form.published_precision = full.published_precision || 'unknown'
+    editRaw.value = full.raw_data ?? null
   } catch {
     /* keep the list-provided relations */
   }
@@ -150,6 +192,8 @@ function buildParams(nextPage: number): string {
   if (contentStatus.value) params.set('content_status', contentStatus.value)
   if (reviewStatus.value) params.set('review_status', reviewStatus.value)
   if (contentType.value) params.set('content_type', contentType.value)
+  if (candidateOnly.value) params.set('candidate', 'true')
+  if (metadataStatus.value) params.set('metadata_status', metadataStatus.value)
   return params.toString()
 }
 
@@ -177,6 +221,8 @@ function resetFilters() {
   contentStatus.value = ''
   reviewStatus.value = ''
   contentType.value = ''
+  candidateOnly.value = false
+  metadataStatus.value = ''
   applyFilters()
 }
 
@@ -208,6 +254,15 @@ async function save() {
         scene_ids: form.scene_ids,
         work_ids: form.work_ids,
         character_ids: form.character_ids,
+        event_ids: form.event_ids,
+        ...(form.clear_published_at
+          ? { clear_published_at: true }
+          : form.published_at
+            ? {
+                published_at: new Date(form.published_at).toISOString(),
+                published_precision: form.published_precision,
+              }
+            : {}),
       })
       toast.success('内容已更新')
     } else {
@@ -225,6 +280,7 @@ async function save() {
         scene_ids: form.scene_ids,
         work_ids: form.work_ids,
         character_ids: form.character_ids,
+        event_ids: form.event_ids,
       })
       toast.success('内容已创建并公开')
     }
@@ -260,16 +316,18 @@ watch(keyword, () => {
 onMounted(async () => {
   load()
   try {
-    const [sourceRes, sceneRes, workRes, charRes] = await Promise.all([
+    const [sourceRes, sceneRes, workRes, charRes, eventRes] = await Promise.all([
       api.get<{ items: Source[] }>('/admin/sources'),
       api.get<{ items: Scene[] }>('/admin/scenes'),
       api.get<{ items: Work[] }>('/admin/works'),
       api.get<{ items: Character[] }>('/admin/characters'),
+      api.get<{ items: Event[] }>('/admin/events'),
     ])
     sources.value = sourceRes.items
     scenes.value = sceneRes.items
     works.value = workRes.items
     characters.value = charRes.items
+    events.value = eventRes.items
   } catch {
     /* metadata is only needed when opening the form */
   }
@@ -297,10 +355,10 @@ onMounted(async () => {
 
     <!-- Filters -->
     <div class="mb-5 border border-line bg-canvas p-3 md:p-4">
-      <div class="grid gap-3 md:grid-cols-[1fr_auto_auto_auto]">
+      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_auto_auto_auto_auto]">
         <div class="relative">
           <Search class="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
-          <input v-model="keyword" class="field !py-2.5 pl-9 text-xs" placeholder="搜索标题或摘要" />
+          <input v-model="keyword" class="field !py-2.5 pl-9 text-xs" placeholder="搜索标题、摘要或来源" />
         </div>
         <select v-model="contentStatus" class="select-field !py-2.5 text-xs" @change="applyFilters">
           <option value="">全部发布状态</option>
@@ -314,10 +372,24 @@ onMounted(async () => {
           <option value="">全部内容类型</option>
           <option v-for="[key, label] in typeOptions" :key="key" :value="key">{{ label }}</option>
         </select>
+        <select v-model="metadataStatus" class="select-field !py-2.5 text-xs" @change="applyFilters">
+          <option value="">全部解析状态</option>
+          <option v-for="option in metadataOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+        </select>
       </div>
-      <div class="mt-2.5 flex items-center justify-between text-[10px] text-muted">
-        <span>共 {{ total }} 条 · 第 {{ page }} / {{ totalPages }} 页</span>
-        <button v-if="keyword || contentStatus || reviewStatus || contentType" class="inline-flex items-center gap-1 hover:text-ink" @click="resetFilters">
+      <div class="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted">
+        <div class="flex items-center gap-3">
+          <span>共 {{ total }} 条 · 第 {{ page }} / {{ totalPages }} 页</span>
+          <label class="inline-flex cursor-pointer items-center gap-1.5">
+            <input v-model="candidateOnly" type="checkbox" class="h-3.5 w-3.5 accent-[#c98791]" @change="applyFilters" />
+            仅搜索候选
+          </label>
+        </div>
+        <button
+          v-if="keyword || contentStatus || reviewStatus || contentType || candidateOnly || metadataStatus"
+          class="inline-flex items-center gap-1 hover:text-ink"
+          @click="resetFilters"
+        >
           <X class="h-3 w-3" />清除筛选
         </button>
       </div>
@@ -356,13 +428,25 @@ onMounted(async () => {
               <span class="h-2.5 w-px bg-line" />
               <span>{{ trustLabels[item.trust_level] || item.trust_level }}</span>
               <span v-if="item.is_official" class="text-[#9a6c72]">官方</span>
+              <span v-if="item.search_task_id" class="border border-accent/25 bg-blush/30 px-1 py-0.5 text-[8px] text-[#9a6c72]">
+                搜索候选
+              </span>
+              <span
+                v-if="item.metadata_status !== 'not_attempted'"
+                class="text-[8px]"
+                :class="item.metadata_status === 'ok' ? 'text-moss' : 'text-[#9a6c72]'"
+              >
+                解析{{ item.metadata_status === 'ok' ? '成功' : item.metadata_status === 'blocked' ? '被拦截' : '失败' }}
+              </span>
             </div>
             <h2 class="mt-1 line-clamp-1 font-display text-[16px] tracking-tight">{{ item.title }}</h2>
             <p v-if="item.summary" class="mt-0.5 line-clamp-1 text-[10px] text-muted">{{ item.summary }}</p>
             <div class="mt-1.5 flex flex-wrap gap-1">
               <span v-for="scene in item.scenes?.slice(0, 2)" :key="scene.id" class="text-[9px] text-muted">{{ scene.name }}</span>
               <span v-if="item.works?.length" class="text-[9px] text-muted">· {{ item.works.map((w) => w.title).join(' / ') }}</span>
+              <span v-if="item.events?.length" class="text-[9px] text-[#9a6c72]">· {{ item.events.map((e) => e.title).join(' / ') }}</span>
             </div>
+            <p v-if="item.metadata_error" class="mt-1 line-clamp-1 text-[9px] text-[#9a6c72]">{{ item.metadata_error }}</p>
           </div>
 
           <div class="flex flex-wrap items-center gap-1.5">
@@ -379,12 +463,17 @@ onMounted(async () => {
 
           <div class="min-w-0 text-[10px] text-muted">
             <div class="truncate">{{ item.source_name || '站内整理' }}</div>
-            <div class="mt-0.5 text-[9px]">{{ sourceTypeLabels[item.source_type] || item.source_type || '—' }}</div>
+            <div class="mt-0.5 text-[9px]">
+              {{ item.origin_platform || sourceTypeLabels[item.origin_type || item.source_type] || item.source_type || '—' }}
+            </div>
           </div>
 
           <div class="text-[10px] text-muted">
-            <div>{{ formatDate(item.published_at) }}</div>
-            <div class="mt-0.5 text-[9px]">收录 {{ formatDate(item.collected_at) }}</div>
+            <div>{{ item.published_at ? formatDate(item.published_at) : '时间未知' }}</div>
+            <div class="mt-0.5 text-[9px]">发现 {{ formatDate(item.discovered_at) }}</div>
+            <div v-if="item.published_precision !== 'verified'" class="mt-0.5 text-[9px] text-[#9a6c72]">
+              {{ precisionLabels[item.published_precision] }}
+            </div>
           </div>
 
           <div class="flex items-center gap-1 lg:justify-end">
@@ -496,6 +585,33 @@ onMounted(async () => {
               <option v-for="key in reviewStatusKeys" :key="key" :value="key">{{ reviewStatusLabels[key] }}</option>
             </select>
           </div>
+          <div class="md:col-span-2">
+            <div class="grid gap-3 border border-line bg-white/40 p-3 sm:grid-cols-2">
+              <div>
+                <label for="content-published-edit" class="field-label">原始发布时间</label>
+                <input
+                  id="content-published-edit"
+                  v-model="form.published_at"
+                  type="datetime-local"
+                  class="field"
+                  :disabled="form.clear_published_at"
+                />
+              </div>
+              <div>
+                <label for="content-precision" class="field-label">时间精确度</label>
+                <select id="content-precision" v-model="form.published_precision" class="select-field" :disabled="form.clear_published_at">
+                  <option v-for="[key, label] in precisionOptions" :key="key" :value="key">{{ label }}</option>
+                </select>
+              </div>
+              <label class="flex cursor-pointer items-center gap-2 text-[11px] text-muted sm:col-span-2">
+                <input v-model="form.clear_published_at" type="checkbox" class="h-3.5 w-3.5 accent-[#c98791]" />
+                来源没有可靠发布时间：清空发布时间，改按发现时间排序
+              </label>
+              <p class="text-[10px] leading-5 text-muted sm:col-span-2">
+                仅在来源明确给出时间时填写。搜索摘要中的日期只能标为「时间待核验」，不得当作已核验时间。
+              </p>
+            </div>
+          </div>
           <div class="flex items-end pb-2">
             <label class="flex cursor-pointer items-center gap-2.5 text-xs">
               <input v-model="form.is_official" type="checkbox" class="h-4 w-4 accent-[#c98791]" />
@@ -545,6 +661,23 @@ onMounted(async () => {
         </div>
 
         <div class="md:col-span-2">
+          <div class="field-label">关联事件</div>
+          <div class="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
+            <button
+              v-for="event in events"
+              :key="event.id"
+              class="border px-2.5 py-1 text-[10px] transition"
+              :class="form.event_ids.includes(event.id) ? 'border-accent/60 bg-blush/50 text-ink' : 'border-line bg-white text-muted hover:border-ink/25'"
+              @click="form.event_ids = toggleId(form.event_ids, event.id)"
+            >
+              {{ event.title }}
+              <span class="opacity-50">{{ event.event_date ? `· ${event.event_date}` : '' }}</span>
+            </button>
+            <p v-if="!events.length" class="text-[10px] text-muted">暂无事件，可先在「内容发现」中创建。</p>
+          </div>
+        </div>
+
+        <div class="md:col-span-2">
           <div class="field-label">关联角色</div>
           <div class="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
             <button
@@ -559,11 +692,17 @@ onMounted(async () => {
             </button>
           </div>
         </div>
+        <div v-if="editingId && rawPreview" class="md:col-span-2">
+          <details class="border border-line bg-[#fbf8f3]">
+            <summary class="cursor-pointer px-3 py-2 text-[10px] text-muted">采集原始数据与解析结果（仅后台可见）</summary>
+            <pre class="max-h-64 overflow-auto border-t border-line px-3 py-2 text-[10px] leading-5 text-ink/70">{{ rawPreview }}</pre>
+          </details>
+        </div>
       </div>
 
       <template #footer>
         <span class="mr-auto hidden text-[10px] text-muted sm:inline">
-          {{ editingId ? `最近收录：${formatDateTime(items.find((i) => i.id === editingId)?.collected_at)}` : '录入后将直接公开' }}
+          {{ editingId ? `发现于：${formatDateTime(items.find((i) => i.id === editingId)?.discovered_at)}` : '录入后将直接公开' }}
         </span>
         <button class="btn-ghost !min-h-9 text-xs" @click="modalOpen = false">取消</button>
         <button class="btn-primary !min-h-9 text-xs" :disabled="saving" @click="save">

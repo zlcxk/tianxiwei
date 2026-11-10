@@ -15,8 +15,14 @@ import (
 
 const contentFields = `
 	c.id, c.title, c.summary, c.content_type, c.source_id,
-	COALESCE(s.name, '站内资料'), COALESCE(s.platform, ''), COALESCE(s.source_type, 'internal'),
-	c.source_author, c.source_url, c.cover_url, c.published_at, c.collected_at,
+	COALESCE(NULLIF(c.origin_name, ''), s.name, '站内资料'),
+	COALESCE(NULLIF(c.origin_platform, ''), s.platform, ''),
+	COALESCE(NULLIF(c.origin_type, ''), s.source_type, 'internal'),
+	c.source_author, c.source_url, c.cover_url,
+	COALESCE(c.published_at, c.discovered_at), c.published_at, c.discovered_at,
+	c.published_precision, c.collected_at, c.created_at,
+	c.origin_name, c.origin_platform, c.origin_type,
+	c.metadata_status, c.metadata_error, c.search_task_id,
 	c.trust_level, c.is_official, c.review_status, c.content_status, c.review_reason,
 	COALESCE((
 		SELECT json_agg(json_build_object(
@@ -38,6 +44,13 @@ const contentFields = `
 		) ORDER BY ch.created_at)
 		FROM content_characters cc JOIN characters ch ON ch.id = cc.character_id
 		JOIN works w ON w.id = ch.work_id WHERE cc.content_id = c.id
+	), '[]'::json),
+	COALESCE((
+		SELECT json_agg(json_build_object(
+			'id', e.id, 'title', e.title,
+			'event_date', COALESCE(to_char(e.event_date, 'YYYY-MM-DD'), '')
+		) ORDER BY e.event_date DESC NULLS LAST, e.created_at)
+		FROM content_events ce JOIN events e ON e.id = ce.event_id WHERE ce.content_id = c.id
 	), '[]'::json)`
 
 const contentFrom = `
@@ -57,13 +70,18 @@ type rowScanner interface {
 
 func scanContentRow(row rowScanner, withRaw bool) (models.Content, error) {
 	var c models.Content
-	var scenesJSON, worksJSON, charsJSON []byte
+	var scenesJSON, worksJSON, charsJSON, eventsJSON []byte
+	var publishedAt *time.Time
 	dest := []any{
 		&c.ID, &c.Title, &c.Summary, &c.ContentType, &c.SourceID,
 		&c.SourceName, &c.SourcePlatform, &c.SourceType,
-		&c.SourceAuthor, &c.SourceURL, &c.CoverURL, &c.PublishedAt, &c.CollectedAt,
+		&c.SourceAuthor, &c.SourceURL, &c.CoverURL,
+		&c.EffectiveAt, &publishedAt, &c.DiscoveredAt,
+		&c.PublishedPrecision, &c.CollectedAt, &c.CreatedAt,
+		&c.OriginName, &c.OriginPlatform, &c.OriginType,
+		&c.MetadataStatus, &c.MetadataError, &c.SearchTaskID,
 		&c.TrustLevel, &c.IsOfficial, &c.ReviewStatus, &c.ContentStatus, &c.ReviewReason,
-		&scenesJSON, &worksJSON, &charsJSON,
+		&scenesJSON, &worksJSON, &charsJSON, &eventsJSON,
 	}
 	var raw []byte
 	if withRaw {
@@ -72,16 +90,25 @@ func scanContentRow(row rowScanner, withRaw bool) (models.Content, error) {
 	if err := row.Scan(dest...); err != nil {
 		return c, mapNoRows(err)
 	}
+	c.PublishedAt = publishedAt
 	c.Scenes = []models.Scene{}
 	c.Works = []models.WorkRef{}
 	c.Characters = []models.CharacterRef{}
+	c.Events = []models.EventRef{}
 	_ = json.Unmarshal(scenesJSON, &c.Scenes)
 	_ = json.Unmarshal(worksJSON, &c.Works)
 	_ = json.Unmarshal(charsJSON, &c.Characters)
+	_ = json.Unmarshal(eventsJSON, &c.Events)
 	if withRaw {
 		c.RawData = raw
 	}
 	return c, nil
+}
+
+type ContentCursor struct {
+	EffectiveAt time.Time
+	CreatedAt   time.Time
+	ID          string
 }
 
 type ContentFilter struct {
@@ -92,15 +119,21 @@ type ContentFilter struct {
 	SourceQuery        string
 	SourceID           string
 	ContentType        string
+	ContentTypes       []string
 	Official           *bool
 	WorkID             string
 	CharacterID        string
+	EventID            string
 	StartTime          *time.Time
 	EndTime            *time.Time
 	IncludeUnpublished bool
 	ContentStatus      string
 	ReviewStatus       string
+	OnlyCandidates     bool
+	SearchTaskID       string
+	MetadataStatus     string
 	Sort               string
+	Cursor             *ContentCursor
 	Limit              int
 	Offset             int
 }
@@ -112,6 +145,8 @@ func (f ContentFilter) where() (string, []any) {
 		args = append(args, value)
 		clauses = append(clauses, fmt.Sprintf(clause, len(args)))
 	}
+	effectiveName := `COALESCE(NULLIF(c.origin_name,''), s.name, '')`
+	effectivePlatform := `COALESCE(NULLIF(c.origin_platform,''), s.platform, '')`
 	if f.ArtistID != "" {
 		add(`c.artist_id = $%d::uuid`, f.ArtistID)
 	}
@@ -124,34 +159,31 @@ func (f ContentFilter) where() (string, []any) {
 		add(`c.review_status = $%d`, f.ReviewStatus)
 	}
 	if f.Keyword != "" {
-		add(`(c.title ILIKE $%d OR c.summary ILIKE $%d OR COALESCE(s.name,'') ILIKE $%d OR COALESCE(s.platform,'') ILIKE $%d)`,
-			"%"+f.Keyword+"%")
-		// The clause needs the same parameter four times; rewrite separately for clarity.
-		args = args[:len(args)-1]
-		clauses = clauses[:len(clauses)-1]
 		idx := len(args) + 1
 		args = append(args, "%"+f.Keyword+"%")
-		clauses = append(clauses, fmt.Sprintf(`(c.title ILIKE $%d OR c.summary ILIKE $%d OR COALESCE(s.name,'') ILIKE $%d OR COALESCE(s.platform,'') ILIKE $%d)`, idx, idx, idx, idx))
+		clauses = append(clauses, fmt.Sprintf(
+			`(c.title ILIKE $%d OR c.summary ILIKE $%d OR %s ILIKE $%d OR %s ILIKE $%d)`,
+			idx, idx, effectiveName, idx, effectivePlatform, idx))
 	}
 	if len(f.Scenes) > 0 {
 		add(`EXISTS (SELECT 1 FROM content_scenes cs JOIN scenes sc ON sc.id=cs.scene_id WHERE cs.content_id=c.id AND sc.code = ANY($%d::text[]))`, f.Scenes)
 	}
 	if f.SourceType != "" {
-		add(`COALESCE(s.source_type,'internal') = $%d`, f.SourceType)
+		add(`COALESCE(NULLIF(c.origin_type,''), s.source_type,'internal') = $%d`, f.SourceType)
 	}
 	if f.SourceQuery != "" {
-		add(`(COALESCE(s.name,'') ILIKE $%d OR COALESCE(s.platform,'') ILIKE $%d)`, "%"+f.SourceQuery+"%")
-		args = args[:len(args)-1]
-		clauses = clauses[:len(clauses)-1]
 		idx := len(args) + 1
 		args = append(args, "%"+f.SourceQuery+"%")
-		clauses = append(clauses, fmt.Sprintf(`(COALESCE(s.name,'') ILIKE $%d OR COALESCE(s.platform,'') ILIKE $%d)`, idx, idx))
+		clauses = append(clauses, fmt.Sprintf(`(%s ILIKE $%d OR %s ILIKE $%d)`, effectiveName, idx, effectivePlatform, idx))
 	}
 	if f.SourceID != "" {
 		add(`c.source_id = $%d::uuid`, f.SourceID)
 	}
 	if f.ContentType != "" {
 		add(`c.content_type = $%d`, f.ContentType)
+	}
+	if len(f.ContentTypes) > 0 {
+		add(`c.content_type = ANY($%d::text[])`, f.ContentTypes)
 	}
 	if f.Official != nil {
 		add(`c.is_official = $%d`, *f.Official)
@@ -162,11 +194,30 @@ func (f ContentFilter) where() (string, []any) {
 	if f.CharacterID != "" {
 		add(`EXISTS (SELECT 1 FROM content_characters cc WHERE cc.content_id=c.id AND cc.character_id=$%d::uuid)`, f.CharacterID)
 	}
+	if f.EventID != "" {
+		add(`EXISTS (SELECT 1 FROM content_events ce WHERE ce.content_id=c.id AND ce.event_id=$%d::uuid)`, f.EventID)
+	}
 	if f.StartTime != nil {
-		add(`c.published_at >= $%d`, *f.StartTime)
+		add(`COALESCE(c.published_at, c.discovered_at) >= $%d`, *f.StartTime)
 	}
 	if f.EndTime != nil {
-		add(`c.published_at <= $%d`, *f.EndTime)
+		add(`COALESCE(c.published_at, c.discovered_at) <= $%d`, *f.EndTime)
+	}
+	if f.OnlyCandidates {
+		clauses = append(clauses, `c.search_task_id IS NOT NULL`)
+	}
+	if f.SearchTaskID != "" {
+		add(`c.search_task_id = $%d::uuid`, f.SearchTaskID)
+	}
+	if f.MetadataStatus != "" {
+		add(`c.metadata_status = $%d`, f.MetadataStatus)
+	}
+	if f.Cursor != nil {
+		idx := len(args) + 1
+		args = append(args, f.Cursor.EffectiveAt, f.Cursor.CreatedAt, f.Cursor.ID)
+		clauses = append(clauses, fmt.Sprintf(
+			`(COALESCE(c.published_at, c.discovered_at), c.created_at, c.id) < ($%d, $%d, $%d::uuid)`,
+			idx, idx+1, idx+2))
 	}
 	if len(clauses) == 0 {
 		return "", args
@@ -177,11 +228,11 @@ func (f ContentFilter) where() (string, []any) {
 func (f ContentFilter) order() string {
 	switch f.Sort {
 	case "oldest":
-		return " ORDER BY c.published_at ASC, c.created_at ASC"
+		return " ORDER BY COALESCE(c.published_at, c.discovered_at) ASC, c.created_at ASC, c.id ASC"
 	case "trust":
-		return ` ORDER BY CASE c.trust_level WHEN 'official' THEN 5 WHEN 'reference' THEN 4 WHEN 'media' THEN 3 WHEN 'internal' THEN 2 ELSE 1 END DESC, c.published_at DESC`
+		return ` ORDER BY CASE c.trust_level WHEN 'official' THEN 5 WHEN 'reference' THEN 4 WHEN 'media' THEN 3 WHEN 'internal' THEN 2 ELSE 1 END DESC, COALESCE(c.published_at, c.discovered_at) DESC, c.id DESC`
 	default:
-		return " ORDER BY c.published_at DESC, c.created_at DESC"
+		return " ORDER BY COALESCE(c.published_at, c.discovered_at) DESC, c.created_at DESC, c.id DESC"
 	}
 }
 
@@ -248,7 +299,7 @@ func (s *Store) ListRecommended(ctx context.Context, f ContentFilter, userID str
 				scene = v
 			}
 		}
-		hours := now.Sub(c.PublishedAt).Hours()
+		hours := now.Sub(c.EffectiveAt).Hours()
 		if hours < 0 {
 			hours = 0
 		}
@@ -387,6 +438,7 @@ type ContentInput struct {
 	SceneIDs     []string  `json:"scene_ids"`
 	WorkIDs      []string  `json:"work_ids"`
 	CharacterIDs []string  `json:"character_ids"`
+	EventIDs     []string  `json:"event_ids"`
 }
 
 func (s *Store) CreateContent(ctx context.Context, in ContentInput, userID string) (models.Content, error) {
@@ -407,8 +459,9 @@ func (s *Store) CreateContent(ctx context.Context, in ContentInput, userID strin
 	err := s.withTx(ctx, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO contents (artist_id, source_id, title, summary, content_type, source_author, source_url,
-				cover_url, published_at, collected_at, trust_level, is_official, review_status, content_status, url_hash, raw_data)
-			VALUES ($1::uuid, NULLIF($2,'')::uuid, $3, $4, $5, $6, $7, $8, $9, now(), $10, $11, 'approved', 'published', NULLIF($12,''), '{"manual":true}'::jsonb)
+				cover_url, published_at, discovered_at, published_precision, collected_at, trust_level, is_official,
+				review_status, content_status, url_hash, raw_data)
+			VALUES ($1::uuid, NULLIF($2,'')::uuid, $3, $4, $5, $6, $7, $8, $9, now(), 'verified', now(), $10, $11, 'approved', 'published', NULLIF($12,''), '{"manual":true}'::jsonb)
 			RETURNING id`,
 			in.ArtistID, in.SourceID, in.Title, in.Summary, in.ContentType, in.SourceAuthor, in.SourceURL,
 			in.CoverURL, in.PublishedAt, in.TrustLevel, in.IsOfficial, urlHash,
@@ -418,7 +471,7 @@ func (s *Store) CreateContent(ctx context.Context, in ContentInput, userID strin
 			}
 			return err
 		}
-		if err := replaceRelations(ctx, tx, id, in.SceneIDs, in.WorkIDs, in.CharacterIDs); err != nil {
+		if err := replaceRelations(ctx, tx, id, in.SceneIDs, in.WorkIDs, in.CharacterIDs, in.EventIDs); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `
@@ -433,7 +486,7 @@ func (s *Store) CreateContent(ctx context.Context, in ContentInput, userID strin
 	return s.GetContentAdmin(ctx, id)
 }
 
-func replaceRelations(ctx context.Context, tx pgx.Tx, contentID string, sceneIDs, workIDs, charIDs []string) error {
+func replaceRelations(ctx context.Context, tx pgx.Tx, contentID string, sceneIDs, workIDs, charIDs, eventIDs []string) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM content_scenes WHERE content_id=$1::uuid`, contentID); err != nil {
 		return err
 	}
@@ -441,6 +494,9 @@ func replaceRelations(ctx context.Context, tx pgx.Tx, contentID string, sceneIDs
 		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM content_characters WHERE content_id=$1::uuid`, contentID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM content_events WHERE content_id=$1::uuid`, contentID); err != nil {
 		return err
 	}
 	for _, sid := range sceneIDs {
@@ -458,23 +514,32 @@ func replaceRelations(ctx context.Context, tx pgx.Tx, contentID string, sceneIDs
 			return err
 		}
 	}
+	for _, eid := range eventIDs {
+		if _, err := tx.Exec(ctx, `INSERT INTO content_events (content_id, event_id) VALUES ($1::uuid,$2::uuid) ON CONFLICT DO NOTHING`, contentID, eid); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 type ContentPatch struct {
-	Title         *string   `json:"title"`
-	Summary       *string   `json:"summary"`
-	ContentType   *string   `json:"content_type"`
-	SourceURL     *string   `json:"source_url"`
-	CoverURL      *string   `json:"cover_url"`
-	IsOfficial    *bool     `json:"is_official"`
-	TrustLevel    *string   `json:"trust_level"`
-	ContentStatus *string   `json:"content_status"`
-	ReviewStatus  *string   `json:"review_status"`
-	ReviewReason  *string   `json:"review_reason"`
-	SceneIDs      *[]string `json:"scene_ids"`
-	WorkIDs       *[]string `json:"work_ids"`
-	CharacterIDs  *[]string `json:"character_ids"`
+	Title              *string    `json:"title"`
+	Summary            *string    `json:"summary"`
+	ContentType        *string    `json:"content_type"`
+	SourceURL          *string    `json:"source_url"`
+	CoverURL           *string    `json:"cover_url"`
+	IsOfficial         *bool      `json:"is_official"`
+	TrustLevel         *string    `json:"trust_level"`
+	ContentStatus      *string    `json:"content_status"`
+	ReviewStatus       *string    `json:"review_status"`
+	ReviewReason       *string    `json:"review_reason"`
+	PublishedAt        *time.Time `json:"published_at"`
+	ClearPublishedAt   bool       `json:"clear_published_at"`
+	PublishedPrecision *string    `json:"published_precision"`
+	SceneIDs           *[]string  `json:"scene_ids"`
+	WorkIDs            *[]string  `json:"work_ids"`
+	CharacterIDs       *[]string  `json:"character_ids"`
+	EventIDs           *[]string  `json:"event_ids"`
 }
 
 func (s *Store) UpdateContent(ctx context.Context, id, userID string, p ContentPatch, note string) (models.Content, error) {
@@ -501,18 +566,21 @@ func (s *Store) UpdateContent(ctx context.Context, id, userID string, p ContentP
 				review_status = COALESCE($10, review_status),
 				review_reason = COALESCE($11, review_reason),
 				url_hash = CASE WHEN $12::text = '' THEN url_hash ELSE $12 END,
+				published_at = CASE WHEN $13::boolean THEN NULL ELSE COALESCE($14::timestamptz, published_at) END,
+				published_precision = CASE WHEN $13::boolean THEN 'unknown' ELSE COALESCE($15, published_precision) END,
 				updated_at = now()
 			WHERE id=$1::uuid`,
 			id, p.Title, p.Summary, p.ContentType, p.SourceURL, p.CoverURL, p.IsOfficial, p.TrustLevel,
 			p.ContentStatus, p.ReviewStatus, p.ReviewReason, urlHash,
+			p.ClearPublishedAt, p.PublishedAt, p.PublishedPrecision,
 		); err != nil {
 			if strings.Contains(err.Error(), "contents_url_hash_uidx") {
 				return ErrConflict
 			}
 			return err
 		}
-		if p.SceneIDs != nil || p.WorkIDs != nil || p.CharacterIDs != nil {
-			var sceneIDs, workIDs, charIDs []string
+		if p.SceneIDs != nil || p.WorkIDs != nil || p.CharacterIDs != nil || p.EventIDs != nil {
+			var sceneIDs, workIDs, charIDs, eventIDs []string
 			if p.SceneIDs != nil {
 				sceneIDs = *p.SceneIDs
 			} else {
@@ -528,7 +596,12 @@ func (s *Store) UpdateContent(ctx context.Context, id, userID string, p ContentP
 			} else {
 				_ = tx.QueryRow(ctx, `SELECT COALESCE(array_agg(character_id::text),'{}'::text[]) FROM content_characters WHERE content_id=$1::uuid`, id).Scan(&charIDs)
 			}
-			if err := replaceRelations(ctx, tx, id, sceneIDs, workIDs, charIDs); err != nil {
+			if p.EventIDs != nil {
+				eventIDs = *p.EventIDs
+			} else {
+				_ = tx.QueryRow(ctx, `SELECT COALESCE(array_agg(event_id::text),'{}'::text[]) FROM content_events WHERE content_id=$1::uuid`, id).Scan(&eventIDs)
+			}
+			if err := replaceRelations(ctx, tx, id, sceneIDs, workIDs, charIDs, eventIDs); err != nil {
 				return err
 			}
 		}
@@ -628,8 +701,8 @@ func (s *Store) Home(ctx context.Context, userID string) (models.HomeData, error
 	var brief models.DailyBrief
 	brief.Date = time.Now().Format("2006-01-02")
 	if err := s.Pool.QueryRow(ctx, `
-		SELECT count(*), max(published_at) FROM contents
-		WHERE content_status='published' AND published_at >= now() - interval '24 hours'`,
+		SELECT count(*), max(COALESCE(published_at, discovered_at)) FROM contents
+		WHERE content_status='published' AND COALESCE(published_at, discovered_at) >= now() - interval '24 hours'`,
 	).Scan(&brief.NewCount, &brief.LastUpdated); err != nil {
 		return models.HomeData{}, err
 	}

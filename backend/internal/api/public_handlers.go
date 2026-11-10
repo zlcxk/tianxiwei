@@ -1,9 +1,12 @@
 package api
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -46,19 +49,28 @@ func (s *Server) listContents(w http.ResponseWriter, r *http.Request) {
 			scenes = append(scenes, v)
 		}
 	}
+	var contentTypes []string
+	for _, ct := range strings.Split(q.Get("content_type"), ",") {
+		if v := strings.TrimSpace(ct); v != "" {
+			contentTypes = append(contentTypes, v)
+		}
+	}
+	cursor, _ := decodeContentCursor(q.Get("cursor"))
 	filter := store.ContentFilter{
-		Keyword:     strings.TrimSpace(q.Get("keyword")),
-		Scenes:      scenes,
-		SourceType:  strings.TrimSpace(q.Get("source_type")),
-		SourceQuery: strings.TrimSpace(q.Get("source")),
-		ContentType: strings.TrimSpace(q.Get("content_type")),
-		Official:    parseBoolQuery(r, "official"),
-		WorkID:      strings.TrimSpace(q.Get("work_id")),
-		CharacterID: strings.TrimSpace(q.Get("character_id")),
-		StartTime:   timeRangeStart(r),
-		Sort:        strings.TrimSpace(q.Get("sort")),
-		Limit:       pageSize,
-		Offset:      offset,
+		Keyword:      strings.TrimSpace(q.Get("keyword")),
+		Scenes:       scenes,
+		SourceType:   strings.TrimSpace(q.Get("source_type")),
+		SourceQuery:  strings.TrimSpace(q.Get("source")),
+		ContentTypes: contentTypes,
+		EventID:      strings.TrimSpace(q.Get("event_id")),
+		Official:     parseBoolQuery(r, "official"),
+		WorkID:       strings.TrimSpace(q.Get("work_id")),
+		CharacterID:  strings.TrimSpace(q.Get("character_id")),
+		StartTime:    timeRangeStart(r),
+		Sort:         strings.TrimSpace(q.Get("sort")),
+		Cursor:       cursor,
+		Limit:        pageSize,
+		Offset:       offset,
 	}
 	userID := ""
 	if u := userFrom(r.Context()); u != nil {
@@ -77,9 +89,46 @@ func (s *Server) listContents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.DecorateContentFavorites(r.Context(), userID, items)
+	nextCursor := ""
+	if len(items) == pageSize {
+		nextCursor = encodeContentCursor(items[len(items)-1])
+	}
 	writeJSON(w, http.StatusOK, models.Paged[models.Content]{
-		Items: items, Page: page, PageSize: pageSize, Total: total,
+		Items: items, Page: page, PageSize: pageSize, Total: total, NextCursor: nextCursor,
 	})
+}
+
+type contentCursorPayload struct {
+	EffectiveAt time.Time `json:"t"`
+	CreatedAt   time.Time `json:"c"`
+	ID          string    `json:"id"`
+}
+
+func encodeContentCursor(c models.Content) string {
+	raw, _ := json.Marshal(contentCursorPayload{
+		EffectiveAt: c.EffectiveAt.UTC(),
+		CreatedAt:   c.CreatedAt,
+		ID:          c.ID,
+	})
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func decodeContentCursor(raw string) (*store.ContentCursor, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	data, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, err
+	}
+	var payload contentCursorPayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, err
+	}
+	if payload.ID == "" || payload.EffectiveAt.IsZero() || payload.CreatedAt.IsZero() {
+		return nil, errors.New("invalid cursor")
+	}
+	return &store.ContentCursor{EffectiveAt: payload.EffectiveAt, CreatedAt: payload.CreatedAt, ID: payload.ID}, nil
 }
 
 func (s *Server) getContent(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +219,53 @@ func (s *Server) getCharacter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, models.CharacterDetail{Character: character, Contents: contents})
+}
+
+func (s *Server) listContentFacets(w http.ResponseWriter, r *http.Request) {
+	facets, err := s.store.ContentFacets(r.Context())
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "internal", "读取筛选信息失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, facets)
+}
+
+func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
+	events, err := s.store.ListEvents(r.Context(), false)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "internal", "读取事件失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": events})
+}
+
+func (s *Server) getEvent(w http.ResponseWriter, r *http.Request) {
+	event, contents, err := s.store.EventDetail(r.Context(), chi.URLParam(r, "id"), userIDFrom(r))
+	if errors.Is(err, store.ErrNotFound) {
+		apiError(w, http.StatusNotFound, "not_found", "事件不存在")
+		return
+	}
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "internal", "读取事件失败")
+		return
+	}
+	if event.Status != "published" && !isEditor(r) {
+		apiError(w, http.StatusNotFound, "not_found", "事件不存在")
+		return
+	}
+	writeJSON(w, http.StatusOK, models.EventDetail{Event: event, Contents: contents})
+}
+
+func userIDFrom(r *http.Request) string {
+	if u := userFrom(r.Context()); u != nil {
+		return u.ID
+	}
+	return ""
+}
+
+func isEditor(r *http.Request) bool {
+	u := userFrom(r.Context())
+	return u != nil && (u.Role == "admin" || u.Role == "editor")
 }
 
 func (s *Server) listScenes(w http.ResponseWriter, r *http.Request) {

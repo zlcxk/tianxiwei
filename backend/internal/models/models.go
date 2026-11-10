@@ -85,30 +85,126 @@ type Character struct {
 }
 
 type Content struct {
-	ID             string          `json:"id"`
-	Title          string          `json:"title"`
-	Summary        string          `json:"summary"`
-	ContentType    string          `json:"content_type"`
-	SourceID       *string         `json:"source_id,omitempty"`
-	SourceName     string          `json:"source_name"`
-	SourcePlatform string          `json:"source_platform"`
-	SourceType     string          `json:"source_type"`
-	SourceAuthor   string          `json:"source_author"`
-	SourceURL      string          `json:"source_url"`
-	CoverURL       string          `json:"cover_url"`
-	PublishedAt    time.Time       `json:"published_at"`
-	CollectedAt    time.Time       `json:"collected_at"`
-	TrustLevel     string          `json:"trust_level"`
-	IsOfficial     bool            `json:"is_official"`
-	ReviewStatus   string          `json:"review_status"`
-	ContentStatus  string          `json:"content_status"`
-	ReviewReason   string          `json:"review_reason,omitempty"`
-	Scenes         []Scene         `json:"scenes"`
-	Works          []WorkRef       `json:"works"`
-	Characters     []CharacterRef  `json:"characters"`
-	Favorited      bool            `json:"favorited"`
-	Unavailable    bool            `json:"unavailable,omitempty"`
-	RawData        json.RawMessage `json:"raw_data,omitempty"`
+	ID                 string          `json:"id"`
+	Title              string          `json:"title"`
+	Summary            string          `json:"summary"`
+	ContentType        string          `json:"content_type"`
+	SourceID           *string         `json:"source_id,omitempty"`
+	SourceName         string          `json:"source_name"`
+	SourcePlatform     string          `json:"source_platform"`
+	SourceType         string          `json:"source_type"`
+	SourceAuthor       string          `json:"source_author"`
+	SourceURL          string          `json:"source_url"`
+	CoverURL           string          `json:"cover_url"`
+	PublishedAt        *time.Time      `json:"published_at"`
+	EffectiveAt        time.Time       `json:"effective_at"`
+	DiscoveredAt       time.Time       `json:"discovered_at"`
+	PublishedPrecision string          `json:"published_precision"`
+	CollectedAt        time.Time       `json:"collected_at"`
+	CreatedAt          time.Time       `json:"created_at"`
+	OriginName         string          `json:"origin_name"`
+	OriginPlatform     string          `json:"origin_platform"`
+	OriginType         string          `json:"origin_type"`
+	MetadataStatus     string          `json:"metadata_status"`
+	MetadataError      string          `json:"metadata_error,omitempty"`
+	SearchTaskID       *string         `json:"search_task_id,omitempty"`
+	TrustLevel         string          `json:"trust_level"`
+	IsOfficial         bool            `json:"is_official"`
+	ReviewStatus       string          `json:"review_status"`
+	ContentStatus      string          `json:"content_status"`
+	ReviewReason       string          `json:"review_reason,omitempty"`
+	Scenes             []Scene         `json:"scenes"`
+	Works              []WorkRef       `json:"works"`
+	Characters         []CharacterRef  `json:"characters"`
+	Events             []EventRef      `json:"events"`
+	Favorited          bool            `json:"favorited"`
+	Unavailable        bool            `json:"unavailable,omitempty"`
+	RawData            json.RawMessage `json:"raw_data,omitempty"`
+}
+
+type EventRef struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Date  string `json:"event_date"`
+}
+
+type Event struct {
+	ID           string    `json:"id"`
+	Title        string    `json:"title"`
+	Summary      string    `json:"summary"`
+	CoverURL     string    `json:"cover_url"`
+	EventDate    string    `json:"event_date"`
+	Location     string    `json:"location"`
+	Status       string    `json:"status"`
+	ContentCount int       `json:"content_count"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type EventDetail struct {
+	Event    Event     `json:"event"`
+	Contents []Content `json:"contents"`
+}
+
+type SearchProvider struct {
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	ProviderType  string         `json:"provider_type"`
+	Endpoint      string         `json:"endpoint"`
+	APIKeyEnv     string         `json:"api_key_env"`
+	Config        map[string]any `json:"config"`
+	Enabled       bool           `json:"enabled"`
+	LastTestAt    *time.Time     `json:"last_test_at"`
+	LastTestOK    *bool          `json:"last_test_ok"`
+	LastTestError string         `json:"last_test_error"`
+	LastLatencyMS int            `json:"last_latency_ms"`
+	CreatedAt     time.Time      `json:"created_at"`
+}
+
+type SearchTask struct {
+	ID              string     `json:"id"`
+	Name            string     `json:"name"`
+	ProviderID      string     `json:"provider_id"`
+	ProviderName    string     `json:"provider_name"`
+	Query           string     `json:"query"`
+	Domains         []string   `json:"domains"`
+	ContentTypeHint string     `json:"content_type_hint"`
+	SourceType      string     `json:"source_type"`
+	TrustLevel      string     `json:"trust_level"`
+	IntervalMinutes int        `json:"interval_minutes"`
+	MaxResults      int        `json:"max_results"`
+	Enabled         bool       `json:"enabled"`
+	LastRunAt       *time.Time `json:"last_run_at"`
+	LastSuccessAt   *time.Time `json:"last_success_at"`
+	LastFailureAt   *time.Time `json:"last_failure_at"`
+	LastError       string     `json:"last_error"`
+	NextRunAt       time.Time  `json:"next_run_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+}
+
+type SearchRun struct {
+	ID               string     `json:"id"`
+	TaskID           string     `json:"task_id"`
+	TaskName         string     `json:"task_name"`
+	Status           string     `json:"status"`
+	TriggerType      string     `json:"trigger_type"`
+	StartedAt        *time.Time `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at"`
+	FetchedCount     int        `json:"fetched_count"`
+	InsertedCount    int        `json:"inserted_count"`
+	DuplicateCount   int        `json:"duplicate_count"`
+	FailedCount      int        `json:"failed_count"`
+	ParsedOKCount    int        `json:"parsed_ok_count"`
+	ParseFailedCount int        `json:"parse_failed_count"`
+	ErrorMessage     string     `json:"error_message"`
+	CreatedAt        time.Time  `json:"created_at"`
+}
+
+type SearchTestResult struct {
+	OK          bool   `json:"ok"`
+	LatencyMS   int64  `json:"latency_ms"`
+	ResultCount int    `json:"result_count"`
+	Message     string `json:"message"`
 }
 
 type FavoriteItem struct {
@@ -184,8 +280,9 @@ type WorkDetail struct {
 }
 
 type Paged[T any] struct {
-	Items    []T `json:"items"`
-	Page     int `json:"page"`
-	PageSize int `json:"page_size"`
-	Total    int `json:"total"`
+	Items      []T    `json:"items"`
+	Page       int    `json:"page"`
+	PageSize   int    `json:"page_size"`
+	Total      int    `json:"total"`
+	NextCursor string `json:"next_cursor,omitempty"`
 }

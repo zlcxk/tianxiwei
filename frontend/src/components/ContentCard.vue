@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { ArrowUpRight, BadgeCheck } from 'lucide-vue-next'
 import type { Content } from '../types'
-import { contentTypeLabels, relativeTime, trustLabels } from '../lib/format'
+import { contentTimeLabel, contentTypeLabels, trustLabels } from '../lib/format'
 import CoverArt from './CoverArt.vue'
 import SceneIcon from './SceneIcon.vue'
 
@@ -44,6 +44,9 @@ const showSourceName = computed(
             <span v-if="content.is_official" class="inline-flex items-center gap-0.5 text-[#9a6c72]">
               <BadgeCheck class="h-3 w-3" />官方
             </span>
+            <span v-if="content.published_precision !== 'verified'" class="text-[9px] text-[#9a6c72]">
+              {{ content.published_precision === 'unknown' ? '时间未知' : '时间待核验' }}
+            </span>
           </div>
           <h3 class="mt-2 line-clamp-2 font-display text-[17px] leading-[1.35] tracking-tight transition group-hover:text-accent md:text-lg">
             {{ content.title }}
@@ -66,7 +69,7 @@ const showSourceName = computed(
           </div>
           <div class="flex shrink-0 items-center gap-2 text-[10px] text-muted">
             <span class="hidden sm:inline">{{ trustLabels[content.trust_level] || content.trust_level }}</span>
-            <time>{{ relativeTime(content.published_at) }}</time>
+            <time>{{ contentTimeLabel(content) }}</time>
             <ArrowUpRight class="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-60" />
           </div>
         </div>

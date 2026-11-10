@@ -67,11 +67,13 @@ func (a *RSSAdapter) Fetch(ctx context.Context, _ string) ([]RawItem, string, er
 		if !a.matches(text) {
 			continue
 		}
-		published := time.Now()
+		var published *time.Time
 		if item.PublishedParsed != nil {
-			published = *item.PublishedParsed
+			t := *item.PublishedParsed
+			published = &t
 		} else if item.UpdatedParsed != nil {
-			published = *item.UpdatedParsed
+			t := *item.UpdatedParsed
+			published = &t
 		}
 		author := ""
 		if item.Author != nil {

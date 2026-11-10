@@ -60,32 +60,37 @@ func (p *Processor) Run(parent context.Context, job models.Job, source models.So
 		decision := DecideReview(source, title+" "+summary, len(classification.SceneIDs))
 		ct := InferContentType(source, title+" "+summary)
 		published := item.PublishedAt
-		if published.IsZero() || published.After(time.Now().Add(24*time.Hour)) {
-			published = time.Now()
+		precision := "verified"
+		if published == nil || published.After(time.Now().Add(24*time.Hour)) {
+			// Never turn discovery time into publication time. Unknown dates stay
+			// NULL and are ordered by discovered_at in the timeline.
+			published = nil
+			precision = "unknown"
 		}
 		author := item.Author
 		if author == "" {
 			author = source.Name
 		}
 		status, err := p.Store.InsertCollected(ctx, store.CollectedContent{
-			SourceID:      source.ID,
-			SourceItemID:  itemID,
-			Title:         truncateRunes(title, 300),
-			Summary:       truncateRunes(summary, 1200),
-			ContentType:   ct,
-			Author:        author,
-			URL:           canonical,
-			CoverURL:      item.CoverURL,
-			URLHash:       hashString(canonical),
-			ContentHash:   contentFingerprint(title, summary),
-			PublishedAt:   published,
-			TrustLevel:    source.TrustLevel,
-			IsOfficial:    source.SourceType == "official" || source.TrustLevel == "official",
-			ReviewStatus:  decision.ReviewStatus,
-			ContentStatus: decision.ContentStatus,
-			ReviewReason:  decision.Reason,
-			RawData:       item.Raw,
-			SceneIDs:      classification.SceneIDs,
+			SourceID:           source.ID,
+			SourceItemID:       itemID,
+			Title:              truncateRunes(title, 300),
+			Summary:            truncateRunes(summary, 1200),
+			ContentType:        ct,
+			Author:             author,
+			URL:                canonical,
+			CoverURL:           item.CoverURL,
+			URLHash:            hashString(canonical),
+			ContentHash:        contentFingerprint(title, summary),
+			PublishedAt:        published,
+			PublishedPrecision: precision,
+			TrustLevel:         source.TrustLevel,
+			IsOfficial:         source.SourceType == "official" || source.TrustLevel == "official",
+			ReviewStatus:       decision.ReviewStatus,
+			ContentStatus:      decision.ContentStatus,
+			ReviewReason:       decision.Reason,
+			RawData:            item.Raw,
+			SceneIDs:           classification.SceneIDs,
 		})
 		if err != nil {
 			failed++

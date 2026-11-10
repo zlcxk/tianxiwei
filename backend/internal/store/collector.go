@@ -10,24 +10,25 @@ import (
 )
 
 type CollectedContent struct {
-	SourceID      string
-	SourceItemID  string
-	Title         string
-	Summary       string
-	ContentType   string
-	Author        string
-	URL           string
-	CoverURL      string
-	URLHash       string
-	ContentHash   string
-	PublishedAt   time.Time
-	TrustLevel    string
-	IsOfficial    bool
-	ReviewStatus  string
-	ContentStatus string
-	ReviewReason  string
-	RawData       []byte
-	SceneIDs      []string
+	SourceID           string
+	SourceItemID       string
+	Title              string
+	Summary            string
+	ContentType        string
+	Author             string
+	URL                string
+	CoverURL           string
+	URLHash            string
+	ContentHash        string
+	PublishedAt        *time.Time
+	PublishedPrecision string
+	TrustLevel         string
+	IsOfficial         bool
+	ReviewStatus       string
+	ContentStatus      string
+	ReviewReason       string
+	RawData            []byte
+	SceneIDs           []string
 }
 
 const (
@@ -78,20 +79,28 @@ func (s *Store) InsertCollected(ctx context.Context, c CollectedContent) (string
 		if len(raw) == 0 {
 			raw = []byte("{}")
 		}
+		if c.PublishedPrecision == "" {
+			if c.PublishedAt == nil {
+				c.PublishedPrecision = "unknown"
+			} else {
+				c.PublishedPrecision = "verified"
+			}
+		}
 		var id string
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO contents (
 				artist_id, source_id, source_item_id, title, summary, content_type, source_author,
-				source_url, cover_url, published_at, collected_at, trust_level, is_official,
-				review_status, content_status, review_reason, url_hash, content_hash, raw_data
+				source_url, cover_url, published_at, discovered_at, published_precision, collected_at,
+				trust_level, is_official, review_status, content_status, review_reason,
+				url_hash, content_hash, raw_data
 			)
-			SELECT a.id, $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10, $11, $12, $13, $14,
-			       NULLIF($15,''), NULLIF($16,''), $17::jsonb
+			SELECT a.id, $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10, now(), $11, $12, $13, $14, $15,
+			       NULLIF($16,''), NULLIF($17,''), $18::jsonb
 			FROM artists a ORDER BY a.created_at LIMIT 1
 			RETURNING id`,
 			c.SourceID, c.SourceItemID, c.Title, c.Summary, c.ContentType, c.Author,
-			c.URL, c.CoverURL, c.PublishedAt, c.TrustLevel, c.IsOfficial, c.ReviewStatus,
-			c.ContentStatus, c.ReviewReason, c.URLHash, c.ContentHash, raw,
+			c.URL, c.CoverURL, c.PublishedAt, c.PublishedPrecision, c.TrustLevel, c.IsOfficial,
+			c.ReviewStatus, c.ContentStatus, c.ReviewReason, c.URLHash, c.ContentHash, raw,
 		).Scan(&id); err != nil {
 			// Unique violations can happen in a race with another worker.
 			if strings.Contains(err.Error(), "contents_source_item_uidx") || strings.Contains(err.Error(), "contents_url_hash_uidx") {

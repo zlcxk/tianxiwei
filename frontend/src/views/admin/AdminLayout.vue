@@ -3,7 +3,9 @@ import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowUpRight,
+  CalendarDays,
   ClipboardCheck,
+  Compass,
   Database,
   Files,
   LayoutDashboard,
@@ -24,6 +26,8 @@ const nav = [
   { to: '/admin', label: '管理概览', icon: LayoutDashboard, exact: true },
   { to: '/admin/contents', label: '内容管理', icon: Files, exact: false },
   { to: '/admin/reviews', label: '待审核', icon: ClipboardCheck, exact: false, badge: true },
+  { to: '/admin/discovery', label: '内容发现', icon: Compass, exact: false },
+  { to: '/admin/events', label: '事件管理', icon: CalendarDays, exact: false },
   { to: '/admin/sources', label: '数据源', icon: Database, exact: false },
   { to: '/admin/jobs', label: '采集任务', icon: RefreshCw, exact: false },
   { to: '/admin/base', label: '基础资料', icon: Files, exact: false },

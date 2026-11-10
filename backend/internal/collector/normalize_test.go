@@ -108,7 +108,7 @@ func TestInferContentType(t *testing.T) {
 		want   string
 	}{
 		{"她参加了一档综艺节目", models.Source{SourceType: "media"}, "variety"},
-		{"新剧角色海报释出", models.Source{SourceType: "media"}, "drama"},
+		{"新剧角色海报释出", models.Source{SourceType: "media"}, "work"},
 		{"品牌代言合作官宣", models.Source{SourceType: "official"}, "fashion"},
 		{"杂志写真造型", models.Source{SourceType: "media"}, "image"},
 		{"出席发布会红毯", models.Source{SourceType: "media"}, "event"},

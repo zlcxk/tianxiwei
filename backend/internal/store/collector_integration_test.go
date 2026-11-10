@@ -31,7 +31,7 @@ func TestInsertCollectedIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 
 	if err := db.Migrate(ctx, pool, true); err != nil {
 		t.Fatalf("migrate: %v", err)
@@ -58,23 +58,26 @@ func TestInsertCollectedIntegration(t *testing.T) {
 		_, _ = pool.Exec(cleanupCtx, `DELETE FROM sources WHERE id=$1::uuid`, source.ID)
 	})
 
+	published := time.Now()
+	runTag := fmt.Sprintf("%d", time.Now().UnixNano())
 	base := CollectedContent{
-		SourceID:      source.ID,
-		SourceItemID:  "item-1",
-		Title:         "集成测试条目",
-		Summary:       "验证采集入库 SQL 与多层去重。",
-		ContentType:   "media",
-		Author:        "test",
-		URL:           "https://example.com/news/1",
-		URLHash:       testHash("https://example.com/news/1"),
-		ContentHash:   testHash("集成测试条目\n验证采集入库 SQL 与多层去重。"),
-		PublishedAt:   time.Now(),
-		TrustLevel:    "media",
-		IsOfficial:    false,
-		ReviewStatus:  "none",
-		ContentStatus: "published",
-		RawData:       []byte(`{"test":true}`),
-		SceneIDs:      []string{"20000000-0000-4000-8000-000000000001"},
+		SourceID:           source.ID,
+		SourceItemID:       "item-1",
+		Title:              "集成测试条目-" + runTag,
+		Summary:            "验证采集入库 SQL 与多层去重。" + runTag,
+		ContentType:        "media",
+		Author:             "test",
+		URL:                "https://example.com/news/" + runTag + "/1",
+		URLHash:            testHash("https://example.com/news/" + runTag + "/1"),
+		ContentHash:        testHash("集成测试条目-" + runTag + "\n验证采集入库 SQL 与多层去重。" + runTag),
+		PublishedAt:        &published,
+		PublishedPrecision: "verified",
+		TrustLevel:         "media",
+		IsOfficial:         false,
+		ReviewStatus:       "none",
+		ContentStatus:      "published",
+		RawData:            []byte(`{"test":true}`),
+		SceneIDs:           []string{"20000000-0000-4000-8000-000000000001"},
 	}
 
 	status, err := s.InsertCollected(ctx, base)
@@ -86,7 +89,7 @@ func TestInsertCollectedIntegration(t *testing.T) {
 	}
 
 	sameItem := base
-	sameItem.URL = "https://example.com/news/1-mirror"
+	sameItem.URL = base.URL + "-mirror"
 	sameItem.URLHash = testHash(sameItem.URL)
 	if status, err = s.InsertCollected(ctx, sameItem); err != nil || status != Duplicate {
 		t.Fatalf("same source item: status=%q err=%v, want duplicate", status, err)
@@ -100,7 +103,7 @@ func TestInsertCollectedIntegration(t *testing.T) {
 
 	sameContent := base
 	sameContent.SourceItemID = "item-3"
-	sameContent.URL = "https://example.com/news/3"
+	sameContent.URL = base.URL + "-content"
 	sameContent.URLHash = testHash(sameContent.URL)
 	if status, err = s.InsertCollected(ctx, sameContent); err != nil || status != Duplicate {
 		t.Fatalf("same fingerprint: status=%q err=%v, want duplicate", status, err)
@@ -108,11 +111,11 @@ func TestInsertCollectedIntegration(t *testing.T) {
 
 	fresh := base
 	fresh.SourceItemID = "item-4"
-	fresh.Title = "集成测试条目二"
-	fresh.Summary = "另一条独立内容。"
-	fresh.URL = "https://example.com/news/4"
+	fresh.Title = "集成测试条目二-" + runTag
+	fresh.Summary = "另一条独立内容。" + runTag
+	fresh.URL = base.URL + "-fresh"
 	fresh.URLHash = testHash(fresh.URL)
-	fresh.ContentHash = testHash("集成测试条目二\n另一条独立内容。")
+	fresh.ContentHash = testHash("集成测试条目二-" + runTag + "\n另一条独立内容。" + runTag)
 	if status, err = s.InsertCollected(ctx, fresh); err != nil || status != Inserted {
 		t.Fatalf("fresh item: status=%q err=%v, want inserted", status, err)
 	}
