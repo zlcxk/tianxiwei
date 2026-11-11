@@ -412,12 +412,17 @@ func (s *Store) failClaimedSearchRun(runID, message string) {
 		WHERE id=$1::uuid AND status='running'`, runID, message)
 }
 
-func (s *Store) CompleteSearchRun(ctx context.Context, runID, taskID string, fetched, inserted, duplicates, failed, parsedOK, parseFailed int, errMsg string, runFailed bool) error {
+// CompleteSearchRun finalizes a search run. A run is only successful when no
+// page and no candidate failed. Partial and failed runs update last_failure_at
+// but deliberately preserve last_success_at, so the overlap window keeps
+// covering everything since the last complete success. paginationPartial marks
+// a later page failure even when no individual candidate failed.
+func (s *Store) CompleteSearchRun(ctx context.Context, runID, taskID string, fetched, inserted, duplicates, failed, parsedOK, parseFailed int, errMsg string, runFailed, paginationPartial bool) error {
 	status := "success"
 	switch {
 	case runFailed:
 		status = "failed"
-	case failed > 0:
+	case paginationPartial || failed > 0:
 		status = "partial"
 	}
 	return s.withTx(ctx, func(tx pgx.Tx) error {
@@ -429,15 +434,15 @@ func (s *Store) CompleteSearchRun(ctx context.Context, runID, taskID string, fet
 			runID, status, fetched, inserted, duplicates, failed, parsedOK, parseFailed, errMsg); err != nil {
 			return err
 		}
-		if runFailed {
+		if status != "success" {
 			_, err := tx.Exec(ctx, `
 				UPDATE search_tasks SET last_run_at=now(), last_failure_at=now(), last_error=$2, updated_at=now()
 				WHERE id=$1::uuid`, taskID, errMsg)
 			return err
 		}
 		_, err := tx.Exec(ctx, `
-			UPDATE search_tasks SET last_run_at=now(), last_success_at=now(), last_error=$2, updated_at=now()
-			WHERE id=$1::uuid`, taskID, errMsg)
+			UPDATE search_tasks SET last_run_at=now(), last_success_at=now(), last_error='', updated_at=now()
+			WHERE id=$1::uuid`, taskID)
 		return err
 	})
 }

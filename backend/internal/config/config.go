@@ -16,9 +16,15 @@ type Config struct {
 	AllowRegistration bool
 	SeedOnStart       bool
 	Environment       string
+	// SearchOverlap is measured back from the last fully successful search run.
+	SearchOverlap time.Duration
 }
 
 func Load() Config {
+	overlapDays := envInt("SEARCH_OVERLAP_DAYS", 7)
+	if overlapDays > 90 {
+		overlapDays = 90
+	}
 	return Config{
 		Addr:              env("ADDR", ":8080"),
 		DatabaseURL:       env("DATABASE_URL", "postgres://xiwei:xiwei_dev@localhost:5432/xiwei?sslmode=disable"),
@@ -28,6 +34,7 @@ func Load() Config {
 		AllowRegistration: envBool("ALLOW_REGISTRATION", false),
 		SeedOnStart:       envBool("SEED_ON_START", true),
 		Environment:       env("APP_ENV", "development"),
+		SearchOverlap:     time.Duration(overlapDays) * 24 * time.Hour,
 	}
 }
 

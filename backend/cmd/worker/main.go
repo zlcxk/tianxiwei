@@ -36,6 +36,9 @@ func main() {
 	}
 
 	worker := collector.NewWorker(store.New(pool))
+	if cfg.SearchOverlap > 0 {
+		worker.SearchProcessor.OverlapWindow = cfg.SearchOverlap
+	}
 	worker.Run(ctx)
 }
 

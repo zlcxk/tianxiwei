@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -13,14 +14,60 @@ import (
 	"xiweispace/backend/internal/store"
 )
 
+// DefaultSearchOverlap is the re-scan window applied before the last complete
+// success, so late-indexed results are not lost. URL dedupe keeps repeated
+// results from being inserted twice.
+const DefaultSearchOverlap = 7 * 24 * time.Hour
+
 type SearchProcessor struct {
 	Store    *store.Store
 	Fetcher  *discovery.MetadataFetcher
 	WorkerID string
+	// OverlapWindow may be configured from SEARCH_OVERLAP_DAYS. It is measured
+	// back from the last fully successful run, never from a partial or failed
+	// run.
+	OverlapWindow time.Duration
 }
 
 func NewSearchProcessor(s *store.Store) *SearchProcessor {
-	return &SearchProcessor{Store: s, Fetcher: discovery.NewMetadataFetcher()}
+	return &SearchProcessor{
+		Store:         s,
+		Fetcher:       discovery.NewMetadataFetcher(),
+		OverlapWindow: DefaultSearchOverlap,
+	}
+}
+
+// searchSince computes the lower bound for a search request. No lower bound is
+// applied until the task has completed at least one fully successful run.
+func searchSince(lastSuccess *time.Time, overlap time.Duration) *time.Time {
+	if lastSuccess == nil {
+		return nil
+	}
+	if overlap <= 0 {
+		overlap = DefaultSearchOverlap
+	}
+	t := lastSuccess.Add(-overlap)
+	return &t
+}
+
+// resolveSourceTrust derives the stored trust level from the identified host.
+// A task-level label is only a conservative fallback for unrecognized hosts:
+// it can never promote a result to official and can never override a host that
+// was positively identified as official media, community or reference.
+func resolveSourceTrust(identity discovery.SourceIdentity, taskTrust string) string {
+	if identity.Known {
+		switch identity.SourceType {
+		case "official", "media", "community", "reference":
+			return identity.SourceType
+		}
+		return "media"
+	}
+	switch strings.TrimSpace(taskTrust) {
+	case "media", "community", "reference":
+		return taskTrust
+	default:
+		return "media"
+	}
 }
 
 func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task models.SearchTask) {
@@ -40,7 +87,7 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 	fail := func(message string) {
 		log.Warn("search run failed", "error", message)
 		if err := p.Store.CompleteSearchRun(context.Background(), run.ID, task.ID,
-			0, 0, 0, 0, 0, 0, message, true); err != nil {
+			0, 0, 0, 0, 0, 0, message, true, false); err != nil {
 			log.Error("complete failed search run", "error", err)
 		}
 		log.Error("task execution failed", "status", "failed", "duration", duration(),
@@ -77,13 +124,7 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 	}
 	entity := EntityFromContext(entityCtx)
 
-	var since *time.Time
-	if task.LastSuccessAt != nil {
-		// Overlap one day so late-indexed results are not lost. URL dedupe keeps
-		// repeated results from being inserted twice.
-		t := task.LastSuccessAt.Add(-24 * time.Hour)
-		since = &t
-	}
+	since := searchSince(task.LastSuccessAt, p.OverlapWindow)
 	until := time.Now()
 	pageSize := 10
 	pages := (task.MaxResults + pageSize - 1) / pageSize
@@ -91,6 +132,7 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 		pages = 5
 	}
 
+	var pageFailure string
 	results := make([]discovery.SearchResult, 0, task.MaxResults)
 	for page := 1; page <= pages && len(results) < task.MaxResults; page++ {
 		pageResults, err := provider.Search(ctx, discovery.SearchRequest{
@@ -99,9 +141,13 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 		})
 		if err != nil {
 			if page == 1 {
+				// Without the first page there is nothing usable at all.
 				fail("搜索失败: " + err.Error())
 				return
 			}
+			// Later pages may still leave usable earlier results, but the run is
+			// incomplete and must be recorded as partial rather than success.
+			pageFailure = fmt.Sprintf("第 %d 页搜索失败: %v", page, err)
 			log.Warn("search page failed", "page", page, "error", err)
 			break
 		}
@@ -142,13 +188,22 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 		}
 		seen[urlHash] = true
 
-		originName, platform, originType := discovery.PlatformForURL(canonical)
-		if result.SourceName != "" {
+		// Identify the publisher from each result URL. The task configuration is
+		// never used as evidence of official identity and never overwrites what
+		// the host itself proves.
+		identity := discovery.IdentifySource(canonical)
+		originName, platform, originType := identity.Name, identity.Platform, identity.SourceType
+		if originName == "" {
 			originName = result.SourceName
 		}
-		if result.Platform != "" {
+		if platform == "" {
 			platform = result.Platform
 		}
+		trustLevel := resolveSourceTrust(identity, task.TrustLevel)
+		// is_official marks an official-source page (currently the recognized
+		// official-media domains). It does not mean the artist's verified account;
+		// that requires exact account identity matching in relevance scoring.
+		isOfficial := identity.Known && identity.SourceType == "official"
 		meta := discovery.PageMetadata{}
 		metaStatus := "not_attempted"
 		metaError := ""
@@ -193,7 +248,7 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 			precision = "unknown"
 		}
 
-		pseudoSource := models.Source{SourceType: originType, TrustLevel: task.TrustLevel}
+		pseudoSource := models.Source{SourceType: originType, TrustLevel: trustLevel}
 		contentType := task.ContentTypeHint
 		if contentType == "" {
 			contentType = InferContentType(pseudoSource, title+" "+summary)
@@ -269,8 +324,8 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 			OriginType:         originType,
 			MetadataStatus:     metaStatus,
 			MetadataError:      metaError,
-			TrustLevel:         task.TrustLevel,
-			IsOfficial:         originType == "official" || task.TrustLevel == "official",
+			TrustLevel:         trustLevel,
+			IsOfficial:         isOfficial,
 			ReviewStatus:       reviewStatus,
 			ContentStatus:      contentStatus,
 			ReviewReason:       reason,
@@ -298,17 +353,25 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 		}
 	}
 
-	errMsg := ""
-	status := "success"
+	failures := make([]string, 0, 2)
+	if pageFailure != "" {
+		failures = append(failures, pageFailure)
+	}
 	if failed > 0 {
-		errMsg = "部分搜索结果处理失败: " + strings.Join(itemErrors, "; ")
+		itemFailure := "部分搜索结果处理失败: " + strings.Join(itemErrors, "; ")
 		if len(itemErrors) == 0 {
-			errMsg = "部分搜索结果缺少标题、链接或处理超时"
+			itemFailure = "部分搜索结果缺少标题、链接或处理超时"
 		}
+		failures = append(failures, itemFailure)
+	}
+	errMsg := strings.Join(failures, "；")
+	partial := len(failures) > 0
+	status := "success"
+	if partial {
 		status = "partial"
 	}
 	if err := p.Store.CompleteSearchRun(context.Background(), run.ID, task.ID,
-		fetched, inserted, duplicates, failed, parsedOK, parseFailed, errMsg, false); err != nil {
+		fetched, inserted, duplicates, failed, parsedOK, parseFailed, errMsg, false, partial); err != nil {
 		log.Error("complete search run", "error", err)
 		return
 	}

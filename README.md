@@ -151,6 +151,7 @@ TEST_LIVE_SEARCH=1 go test ./internal/discovery -run TestBingLive -v
 | `ALLOW_REGISTRATION` | `false` | 是否开放访客注册 |
 | `SESSION_TTL_HOURS` | `168` | 会话有效期（小时） |
 | `SEED_ON_START` | `true` | 是否应用种子迁移（只执行一次） |
+| `SEARCH_OVERLAP_DAYS` | `7` | 搜索任务基于上次完整成功向前回溯的天数（1–90） |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | — | Compose 数据库配置，口令必须修改 |
 | `WEB_PORT` | `8088` | Web 入口端口 |
 

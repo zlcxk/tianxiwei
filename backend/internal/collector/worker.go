@@ -198,7 +198,7 @@ func (w *Worker) launchSearch(ctx context.Context, run models.SearchRun, task mo
 				completeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				_ = w.Store.CompleteSearchRun(completeCtx, run.ID, task.ID, 0, 0, 0, 0, 0, 0,
-					fmt.Sprintf("任务执行 panic: %v", r), true)
+					fmt.Sprintf("任务执行 panic: %v", r), true, false)
 			}
 		}()
 		slog.Info("task execution started", "worker_id", w.ID, "task_type", "search", "run_id", run.ID)

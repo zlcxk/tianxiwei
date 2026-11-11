@@ -178,6 +178,16 @@ func TestJobLifecycleReliabilityIntegration(t *testing.T) {
 		return status, errMsg
 	}
 
+	runTimes := func() (*time.Time, *time.Time) {
+		var successAt, failureAt *time.Time
+		if err := pool.QueryRow(ctx, `
+			SELECT last_success_at, last_failure_at FROM search_tasks WHERE id=$1::uuid`, task.ID).
+			Scan(&successAt, &failureAt); err != nil {
+			t.Fatalf("read task timestamps: %v", err)
+		}
+		return successAt, failureAt
+	}
+
 	partialRunID := insertRun()
 	run, claimedTask, err := s.ClaimSearchRun(ctx)
 	if err != nil {
@@ -186,11 +196,79 @@ func TestJobLifecycleReliabilityIntegration(t *testing.T) {
 	if run.ID != partialRunID || claimedTask.ID != task.ID {
 		t.Fatalf("claimed run=%s task=%s, want run=%s task=%s", run.ID, claimedTask.ID, partialRunID, task.ID)
 	}
-	if err := s.CompleteSearchRun(ctx, partialRunID, task.ID, 5, 2, 1, 2, 3, 1, "two candidates failed", false); err != nil {
+	if err := s.CompleteSearchRun(ctx, partialRunID, task.ID, 5, 2, 1, 2, 3, 1, "two candidates failed", false, false); err != nil {
 		t.Fatalf("complete partial search run: %v", err)
 	}
 	if status, _ := runStatus(partialRunID); status != "partial" {
 		t.Fatalf("search run status = %q, want partial", status)
+	}
+	// A partial run must never advance last_success_at.
+	if successAt, failureAt := runTimes(); successAt != nil || failureAt == nil {
+		t.Fatalf("after partial run last_success_at=%v last_failure_at=%v, want nil and set", successAt, failureAt)
+	}
+
+	// A later page failure with no candidate failures is still partial.
+	pageRunID := insertRun()
+	if _, _, err := s.ClaimSearchRun(ctx); err != nil {
+		t.Fatalf("claim page failure run: %v", err)
+	}
+	if err := s.CompleteSearchRun(ctx, pageRunID, task.ID, 10, 10, 0, 0, 10, 0,
+		"第 3 页搜索失败: timeout", false, true); err != nil {
+		t.Fatalf("complete page failure run: %v", err)
+	}
+	if status, errMsg := runStatus(pageRunID); status != "partial" || !strings.Contains(errMsg, "第 3 页") {
+		t.Fatalf("page failure run status=%q error=%q, want partial with page 3", status, errMsg)
+	}
+	if successAt, failureAt := runTimes(); successAt != nil || failureAt == nil {
+		t.Fatalf("after page failure last_success_at=%v last_failure_at=%v, want nil and set", successAt, failureAt)
+	}
+
+	// A fully successful run advances last_success_at.
+	successRunID := insertRun()
+	if _, _, err := s.ClaimSearchRun(ctx); err != nil {
+		t.Fatalf("claim success search run: %v", err)
+	}
+	if err := s.CompleteSearchRun(ctx, successRunID, task.ID, 4, 4, 0, 0, 4, 0, "", false, false); err != nil {
+		t.Fatalf("complete success search run: %v", err)
+	}
+	if status, _ := runStatus(successRunID); status != "success" {
+		t.Fatalf("success search run status = %q, want success", status)
+	}
+	firstSuccess, firstFailure := runTimes()
+	if firstSuccess == nil {
+		t.Fatal("successful run did not set last_success_at")
+	}
+	if firstFailure == nil {
+		t.Fatal("successful run cleared last_failure_at history")
+	}
+
+	// A subsequent partial run preserves the last complete success timestamp.
+	laterPartialID := insertRun()
+	if _, _, err := s.ClaimSearchRun(ctx); err != nil {
+		t.Fatalf("claim later partial run: %v", err)
+	}
+	if err := s.CompleteSearchRun(ctx, laterPartialID, task.ID, 2, 1, 0, 1, 2, 0,
+		"one candidate failed", false, false); err != nil {
+		t.Fatalf("complete later partial run: %v", err)
+	}
+	if successAt, _ := runTimes(); successAt == nil || !successAt.Equal(*firstSuccess) {
+		t.Fatalf("partial run moved last_success_at to %v, want %v", successAt, *firstSuccess)
+	}
+
+	// A failed run also preserves the last complete success timestamp.
+	failedRunID := insertRun()
+	if _, _, err := s.ClaimSearchRun(ctx); err != nil {
+		t.Fatalf("claim failed search run: %v", err)
+	}
+	if err := s.CompleteSearchRun(ctx, failedRunID, task.ID, 0, 0, 0, 0, 0, 0,
+		"provider unavailable", true, false); err != nil {
+		t.Fatalf("complete failed search run: %v", err)
+	}
+	if status, _ := runStatus(failedRunID); status != "failed" {
+		t.Fatalf("failed search run status = %q, want failed", status)
+	}
+	if successAt, _ := runTimes(); successAt == nil || !successAt.Equal(*firstSuccess) {
+		t.Fatalf("failed run moved last_success_at to %v, want %v", successAt, *firstSuccess)
 	}
 
 	staleRunID := insertRun()

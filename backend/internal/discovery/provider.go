@@ -84,48 +84,85 @@ func domainClause(domains []string) string {
 	return "(" + strings.Join(parts, " OR ") + ")"
 }
 
-// PlatformForURL maps a publisher host to a human-readable platform and a
-// conservative source type. Unknown hosts stay "media" rather than being
-// promoted to official.
-func PlatformForURL(rawURL string) (name, platform, sourceType string) {
-	host := hostOf(rawURL)
-	name = host
-	if name == "" {
-		return "", "", "media"
+// SourceIdentity is the publisher identity derived from a result URL. Known is
+// false for hosts that are not in the configured platform list; callers must
+// keep those hosts conservative (media) instead of promoting them.
+type SourceIdentity struct {
+	Name       string
+	Platform   string
+	SourceType string
+	Known      bool
+}
+
+// IdentifySource maps a publisher host to a human-readable platform and a
+// conservative source type. Matching is on hostname boundaries only: the host
+// must equal the root domain or be a subdomain of it. This prevents
+// "fakeweibo.com" and "weibo.com.attacker.tld" from being treated as Weibo.
+func IdentifySource(rawURL string) SourceIdentity {
+	host := normalizeHost(hostOf(rawURL))
+	if host == "" {
+		return SourceIdentity{SourceType: "media"}
 	}
-	name = strings.TrimPrefix(name, "www.")
+	name := strings.TrimPrefix(host, "www.")
+	identity := SourceIdentity{Name: name, Platform: name, SourceType: "media"}
+
 	switch {
-	case strings.HasSuffix(host, "weibo.com") || strings.HasSuffix(host, "weibo.cn"):
-		return "微博", "微博", "community"
-	case strings.HasSuffix(host, "xiaohongshu.com"):
-		return "小红书", "小红书", "community"
-	case strings.HasSuffix(host, "douyin.com"):
-		return "抖音", "抖音", "community"
-	case strings.HasSuffix(host, "bilibili.com"):
-		return "哔哩哔哩", "哔哩哔哩", "community"
-	case strings.HasSuffix(host, "zhihu.com"):
-		return "知乎", "知乎", "community"
-	case strings.HasSuffix(host, "baike.baidu.com") || strings.HasSuffix(host, "wikipedia.org"):
-		return "百科资料", "百科", "reference"
-	case strings.HasSuffix(host, "weixin.qq.com") || strings.HasSuffix(host, "mp.weixin.qq.com"):
-		return "微信公众号", "微信", "media"
-	case strings.HasSuffix(host, "sohu.com"):
-		return "搜狐", "搜狐", "media"
-	case strings.HasSuffix(host, "sina.com.cn") || strings.HasSuffix(host, "sina.cn"):
-		return "新浪", "新浪", "media"
-	case strings.HasSuffix(host, "163.com"):
-		return "网易", "网易", "media"
-	case strings.HasSuffix(host, "qq.com"):
-		return "腾讯新闻", "腾讯", "media"
-	case strings.HasSuffix(host, "ifeng.com"):
-		return "凤凰网", "凤凰网", "media"
-	case strings.HasSuffix(host, "thepaper.cn"):
-		return "澎湃新闻", "澎湃", "media"
-	case strings.HasSuffix(host, "cctv.com") || strings.HasSuffix(host, "cnr.cn") || strings.HasSuffix(host, "xinhuanet.com") || strings.HasSuffix(host, "people.com.cn"):
-		return "官方媒体", "官方媒体", "official"
-	case strings.HasSuffix(host, "baidu.com"):
-		return "百度", "百度", "reference"
-	default:
-		return name, name, "media"
+	case hostMatches(host, "weibo.com") || hostMatches(host, "weibo.cn"):
+		identity = sourceIdentity("微博", "微博", "community")
+	case hostMatches(host, "xiaohongshu.com"):
+		identity = sourceIdentity("小红书", "小红书", "community")
+	case hostMatches(host, "douyin.com"):
+		identity = sourceIdentity("抖音", "抖音", "community")
+	case hostMatches(host, "bilibili.com"):
+		identity = sourceIdentity("哔哩哔哩", "哔哩哔哩", "community")
+	case hostMatches(host, "zhihu.com"):
+		identity = sourceIdentity("知乎", "知乎", "community")
+	case hostMatches(host, "baike.baidu.com") || hostMatches(host, "wikipedia.org"):
+		identity = sourceIdentity("百科资料", "百科", "reference")
+	case hostMatches(host, "weixin.qq.com"):
+		identity = sourceIdentity("微信公众号", "微信", "media")
+	case hostMatches(host, "sohu.com"):
+		identity = sourceIdentity("搜狐", "搜狐", "media")
+	case hostMatches(host, "sina.com.cn") || hostMatches(host, "sina.cn"):
+		identity = sourceIdentity("新浪", "新浪", "media")
+	case hostMatches(host, "163.com"):
+		identity = sourceIdentity("网易", "网易", "media")
+	case hostMatches(host, "qq.com"):
+		identity = sourceIdentity("腾讯新闻", "腾讯", "media")
+	case hostMatches(host, "ifeng.com"):
+		identity = sourceIdentity("凤凰网", "凤凰网", "media")
+	case hostMatches(host, "thepaper.cn"):
+		identity = sourceIdentity("澎湃新闻", "澎湃", "media")
+	case hostMatches(host, "cctv.com") || hostMatches(host, "cnr.cn") ||
+		hostMatches(host, "xinhuanet.com") || hostMatches(host, "people.com.cn"):
+		identity = sourceIdentity("官方媒体", "官方媒体", "official")
+	case hostMatches(host, "baidu.com"):
+		identity = sourceIdentity("百度", "百度", "reference")
 	}
+	return identity
+}
+
+func sourceIdentity(name, platform, sourceType string) SourceIdentity {
+	return SourceIdentity{Name: name, Platform: platform, SourceType: sourceType, Known: true}
+}
+
+// PlatformForURL is the legacy three-value form of IdentifySource.
+func PlatformForURL(rawURL string) (name, platform, sourceType string) {
+	identity := IdentifySource(rawURL)
+	return identity.Name, identity.Platform, identity.SourceType
+}
+
+// hostMatches reports whether host is the root domain itself or a subdomain.
+// Ports are removed by url.Hostname; case and trailing dots are normalized.
+func hostMatches(host, root string) bool {
+	host = normalizeHost(host)
+	root = normalizeHost(root)
+	if host == "" || root == "" {
+		return false
+	}
+	return host == root || strings.HasSuffix(host, "."+root)
+}
+
+func normalizeHost(host string) string {
+	return strings.TrimRight(strings.ToLower(strings.TrimSpace(host)), ".")
 }
