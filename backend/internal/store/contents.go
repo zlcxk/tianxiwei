@@ -684,10 +684,9 @@ func (s *Store) Home(ctx context.Context, userID string) (models.HomeData, error
 	if err != nil {
 		return models.HomeData{}, err
 	}
-	forYou, _, err := s.ListContents(ctx, ContentFilter{ArtistID: artist.ID, Limit: 4})
-	if err != nil {
-		return models.HomeData{}, err
-	}
+	// Anonymous visitors have no preferences to recommend from. Leaving ForYou
+	// empty hides the module instead of duplicating the latest feed.
+	forYou := []models.Content{}
 	if userID != "" {
 		f, _, err := s.ListRecommended(ctx, ContentFilter{ArtistID: artist.ID}, userID)
 		if err == nil {
@@ -696,10 +695,6 @@ func (s *Store) Home(ctx context.Context, userID string) (models.HomeData, error
 				forYou = forYou[:4]
 			}
 		}
-	}
-	featured, _, err := s.ListContents(ctx, ContentFilter{ArtistID: artist.ID, ContentType: "internal", Limit: 3})
-	if err != nil {
-		return models.HomeData{}, err
 	}
 	picks, err := s.ActiveEditorialPicks(ctx, 8)
 	if err != nil {
@@ -728,10 +723,9 @@ func (s *Store) Home(ctx context.Context, userID string) (models.HomeData, error
 	}
 	_ = s.markContentFavorites(ctx, userID, latest)
 	_ = s.markContentFavorites(ctx, userID, forYou)
-	_ = s.markContentFavorites(ctx, userID, featured)
 	_ = s.markContentFavorites(ctx, userID, archive)
 	return models.HomeData{
 		Artist: artist, Scenes: scenes, DefaultScene: defaultScene,
-		Latest: latest, ForYou: forYou, Featured: featured, Picks: picks, Archive: archive, Works: works, Brief: brief,
+		Latest: latest, ForYou: forYou, Picks: picks, Archive: archive, Works: works, Brief: brief,
 	}, nil
 }

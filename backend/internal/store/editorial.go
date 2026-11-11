@@ -2,12 +2,21 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"xiweispace/backend/internal/models"
+)
+
+const (
+	// editorialPickAdminLimit keeps the admin list bounded. The console does not
+	// paginate picks, so an unbounded list would grow with every curated item.
+	editorialPickAdminLimit = 200
+	// editorialPickPublicLimit caps the home-page pick payload.
+	editorialPickPublicLimit = 8
 )
 
 const editorialPickSelect = `
@@ -44,7 +53,7 @@ func (s *Store) ListEditorialPicks(ctx context.Context, includeInactive bool) ([
 			  AND (p.starts_at IS NULL OR p.starts_at <= now())
 			  AND (p.ends_at IS NULL OR p.ends_at > now())`
 	}
-	query += ` ORDER BY p.sort_order ASC, p.created_at DESC`
+	query += fmt.Sprintf(` ORDER BY p.sort_order ASC, p.created_at DESC LIMIT %d`, editorialPickAdminLimit)
 	rows, err := s.Pool.Query(ctx, query)
 	if err != nil {
 		return nil, err
@@ -56,8 +65,8 @@ func (s *Store) ListEditorialPicks(ctx context.Context, includeInactive bool) ([
 // ActiveEditorialPicks returns enabled picks whose referenced content is still
 // published and whose display window contains now.
 func (s *Store) ActiveEditorialPicks(ctx context.Context, limit int) ([]models.EditorialPick, error) {
-	if limit <= 0 || limit > 24 {
-		limit = 12
+	if limit <= 0 || limit > editorialPickPublicLimit {
+		limit = editorialPickPublicLimit
 	}
 	rows, err := s.Pool.Query(ctx, editorialPickSelect+`
 		JOIN contents c ON c.id = p.content_id
@@ -143,33 +152,57 @@ func (s *Store) DeleteEditorialPick(ctx context.Context, id string) error {
 	return nil
 }
 
-// AttachEditorialPickContent loads the referenced content for each pick and
-// marks favorites for the current user. Content fetch failures leave Content
-// nil so the API still returns the pick record for editorial cleanup.
+// AttachEditorialPickContent loads the referenced content for all picks in a
+// single query and marks favorites for the current user. raw_data is never
+// loaded: the editorial console only needs public display fields. Content fetch
+// failures leave Content nil so the API still returns the pick record for
+// editorial cleanup. Public callers only see published content.
 func (s *Store) AttachEditorialPickContent(ctx context.Context, picks []models.EditorialPick, userID string, admin bool) {
-	indexes := make([]int, 0, len(picks))
-	contents := make([]models.Content, 0, len(picks))
+	if len(picks) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(picks))
+	seen := make(map[string]struct{}, len(picks))
 	for i := range picks {
-		var (
-			c   models.Content
-			err error
-		)
-		if admin {
-			c, err = s.GetContentAdmin(ctx, picks[i].ContentID)
-		} else {
-			c, err = s.GetContent(ctx, picks[i].ContentID)
+		id := picks[i].ContentID
+		if id == "" {
+			continue
 		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return
+	}
+	where := ` WHERE c.id = ANY($1::uuid[])`
+	if !admin {
+		where += ` AND c.content_status = 'published'`
+	}
+	rows, err := s.Pool.Query(ctx, contentSelect(false)+where, ids)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	byID := make(map[string]models.Content, len(ids))
+	contents := make([]models.Content, 0, len(ids))
+	for rows.Next() {
+		c, err := scanContentRow(rows, false)
 		if err != nil {
 			continue
 		}
-		indexes = append(indexes, i)
+		byID[c.ID] = c
 		contents = append(contents, c)
 	}
-	if userID != "" {
+	if userID != "" && len(contents) > 0 {
 		_ = s.markContentFavorites(ctx, userID, contents)
 	}
-	for k, i := range indexes {
-		c := contents[k]
-		picks[i].Content = &c
+	for i := range picks {
+		if c, ok := byID[picks[i].ContentID]; ok {
+			c := c
+			picks[i].Content = &c
+		}
 	}
 }

@@ -44,6 +44,18 @@ func TestEditorialPicksIntegration(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DELETE FROM editorial_picks WHERE content_id=$1::uuid`, content.ID); err != nil {
 		t.Fatalf("cleanup picks: %v", err)
 	}
+	// Keep non-empty raw_data in the database so the assertions below prove the
+	// editorial path never selects it.
+	var originalRaw []byte
+	if err := pool.QueryRow(ctx, `SELECT raw_data FROM contents WHERE id=$1::uuid`, content.ID).Scan(&originalRaw); err != nil {
+		t.Fatalf("read raw_data: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE contents SET raw_data='{"integration":true}'::jsonb WHERE id=$1::uuid`, content.ID); err != nil {
+		t.Fatalf("seed raw_data: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `UPDATE contents SET raw_data=$2::jsonb WHERE id=$1::uuid`, content.ID, string(originalRaw))
+	})
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM editorial_picks WHERE content_id=$1::uuid`, content.ID)
 	})
@@ -79,6 +91,9 @@ func TestEditorialPicksIntegration(t *testing.T) {
 			if item.Content == nil || item.Content.ID != content.ID {
 				t.Fatalf("pick content not attached: %+v", item.Content)
 			}
+			if len(item.Content.RawData) != 0 {
+				t.Fatal("admin pick must not load raw_data")
+			}
 		}
 	}
 	if !found {
@@ -96,6 +111,9 @@ func TestEditorialPicksIntegration(t *testing.T) {
 	home, err := s.Home(ctx, "")
 	if err != nil {
 		t.Fatalf("home with picks: %v", err)
+	}
+	if len(home.ForYou) != 0 {
+		t.Fatalf("anonymous home for_you = %d items, want 0 (must not duplicate latest)", len(home.ForYou))
 	}
 	found = false
 	for _, item := range home.Picks {
@@ -148,6 +166,136 @@ func TestEditorialPicksIntegration(t *testing.T) {
 	}
 	if _, err := s.GetEditorialPick(ctx, pick.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("get deleted pick error = %v, want ErrNotFound", err)
+	}
+}
+
+// TestEditorialPickBatchLimitIntegration covers the batched content lookup:
+// the public list stays capped at 8, raw_data is never attached, and
+// unpublished content is skipped for public callers.
+func TestEditorialPickBatchLimitIntegration(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set TEST_DATABASE_URL to run store integration tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	pool, err := db.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	if err := db.Migrate(ctx, pool, true); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := New(pool)
+
+	contents, _, err := s.ListContents(ctx, ContentFilter{Limit: 20})
+	if err != nil {
+		t.Fatalf("list published contents: %v", err)
+	}
+	if len(contents) < editorialPickPublicLimit+1 {
+		t.Skipf("need %d published contents, have %d", editorialPickPublicLimit+1, len(contents))
+	}
+	contents = contents[:editorialPickPublicLimit+1]
+	ids := make([]string, len(contents))
+	for i := range contents {
+		ids[i] = contents[i].ID
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM editorial_picks WHERE content_id = ANY($1::uuid[])`, ids); err != nil {
+		t.Fatalf("cleanup picks: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM editorial_picks WHERE content_id = ANY($1::uuid[])`, ids)
+	})
+
+	rawBackup := make(map[string]string, len(ids))
+	for _, id := range ids {
+		var raw []byte
+		if err := pool.QueryRow(ctx, `SELECT raw_data FROM contents WHERE id=$1::uuid`, id).Scan(&raw); err != nil {
+			t.Fatalf("read raw_data: %v", err)
+		}
+		rawBackup[id] = string(raw)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE contents SET raw_data='{"integration":true}'::jsonb WHERE id = ANY($1::uuid[])`, ids); err != nil {
+		t.Fatalf("seed raw_data: %v", err)
+	}
+	t.Cleanup(func() {
+		for id, raw := range rawBackup {
+			_, _ = pool.Exec(context.Background(), `UPDATE contents SET raw_data=$2::jsonb WHERE id=$1::uuid`, id, raw)
+		}
+	})
+
+	enabled := true
+	for i, id := range ids {
+		if _, err := s.CreateEditorialPick(ctx, EditorialPickInput{ContentID: id, SortOrder: i, Enabled: &enabled}); err != nil {
+			t.Fatalf("create pick %d: %v", i, err)
+		}
+	}
+
+	active, err := s.ActiveEditorialPicks(ctx, 12)
+	if err != nil {
+		t.Fatalf("active picks: %v", err)
+	}
+	if len(active) != editorialPickPublicLimit {
+		t.Fatalf("active picks = %d, want public limit %d", len(active), editorialPickPublicLimit)
+	}
+
+	all, err := s.ListEditorialPicks(ctx, true)
+	if err != nil {
+		t.Fatalf("list admin picks: %v", err)
+	}
+	ours := make([]models.EditorialPick, 0, len(ids))
+	for _, p := range all {
+		for _, id := range ids {
+			if p.ContentID == id {
+				ours = append(ours, p)
+				break
+			}
+		}
+	}
+	if len(ours) != len(ids) {
+		t.Fatalf("admin picks for test contents = %d, want %d", len(ours), len(ids))
+	}
+
+	s.AttachEditorialPickContent(ctx, ours, "", true)
+	for _, p := range ours {
+		if p.Content == nil {
+			t.Fatalf("admin attach missing content for %s", p.ContentID)
+		}
+		if len(p.Content.RawData) != 0 {
+			t.Fatalf("admin attach loaded raw_data for %s", p.ContentID)
+		}
+	}
+
+	var originalStatus string
+	if err := pool.QueryRow(ctx, `SELECT content_status FROM contents WHERE id=$1::uuid`, ids[0]).Scan(&originalStatus); err != nil {
+		t.Fatalf("read content status: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE contents SET content_status='pending' WHERE id=$1::uuid`, ids[0]); err != nil {
+		t.Fatalf("hide content: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `UPDATE contents SET content_status=$2 WHERE id=$1::uuid`, ids[0], originalStatus)
+	})
+
+	for i := range ours {
+		ours[i].Content = nil
+	}
+	s.AttachEditorialPickContent(ctx, ours, "", false)
+	for _, p := range ours {
+		if p.ContentID == ids[0] {
+			if p.Content != nil {
+				t.Fatal("public attach must skip unpublished content")
+			}
+			continue
+		}
+		if p.Content == nil {
+			t.Fatalf("public attach missing published content for %s", p.ContentID)
+		}
+		if len(p.Content.RawData) != 0 {
+			t.Fatalf("public attach loaded raw_data for %s", p.ContentID)
+		}
 	}
 }
 

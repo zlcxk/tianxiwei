@@ -153,7 +153,6 @@ export interface HomeData {
   default_scene: string
   latest: Content[]
   for_you: Content[]
-  featured: Content[]
   picks: EditorialPick[]
   archive: Content[]
   works: Work[]

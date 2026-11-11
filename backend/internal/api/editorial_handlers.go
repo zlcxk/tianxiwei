@@ -30,7 +30,7 @@ func (s *Server) validatePickContent(r *http.Request, contentID string) (models.
 	if !uuidPattern.MatchString(contentID) {
 		return models.Content{}, false
 	}
-	content, err := s.store.GetContentAdmin(r.Context(), contentID)
+	content, err := s.store.GetContent(r.Context(), contentID)
 	if err != nil {
 		return models.Content{}, false
 	}

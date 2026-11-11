@@ -293,7 +293,6 @@ type HomeData struct {
 	DefaultScene string          `json:"default_scene"`
 	Latest       []Content       `json:"latest"`
 	ForYou       []Content       `json:"for_you"`
-	Featured     []Content       `json:"featured"`
 	Picks        []EditorialPick `json:"picks"`
 	Archive      []Content       `json:"archive"`
 	Works        []Work          `json:"works"`

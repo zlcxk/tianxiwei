@@ -155,6 +155,29 @@ func TestDiscoveryTimelineIntegration(t *testing.T) {
 		t.Fatalf("list event contents: %v (n=%d)", err, len(byEvent))
 	}
 
+	// Regression checks for the discover-page filters: content type, source
+	// type and time range must still compose with the keyword filter.
+	typed, typedTotal, err := s.ListContents(ctx, ContentFilter{Keyword: prefix, ContentTypes: []string{"news"}, Limit: 10})
+	if err != nil || typedTotal != 3 || len(typed) != 3 {
+		t.Fatalf("content type filter: %v total=%d n=%d, want 3", err, typedTotal, len(typed))
+	}
+	if _, total, err := s.ListContents(ctx, ContentFilter{Keyword: prefix, ContentTypes: []string{"video"}, Limit: 10}); err != nil || total != 0 {
+		t.Fatalf("non-matching content type must be empty: %v total=%d", err, total)
+	}
+	if _, total, err := s.ListContents(ctx, ContentFilter{Keyword: prefix, SourceType: "media", Limit: 10}); err != nil || total != 3 {
+		t.Fatalf("source type filter: %v total=%d, want 3", err, total)
+	}
+	if _, total, err := s.ListContents(ctx, ContentFilter{Keyword: prefix, SourceType: "official", Limit: 10}); err != nil || total != 0 {
+		t.Fatalf("non-matching source type must be empty: %v total=%d", err, total)
+	}
+	recent, recentTotal, err := s.ListContents(ctx, ContentFilter{Keyword: prefix, EndTime: &publishedOlder, Limit: 10})
+	if err != nil || recentTotal != 2 || len(recent) != 2 {
+		t.Fatalf("time range filter: %v total=%d n=%d, want 2", err, recentTotal, len(recent))
+	}
+	if recent[0].ID != olderID || recent[1].ID != unknownID {
+		t.Fatalf("time range order = %s,%s, want %s,%s", recent[0].ID, recent[1].ID, olderID, unknownID)
+	}
+
 	facets, err := s.ContentFacets(ctx)
 	if err != nil {
 		t.Fatalf("facets: %v", err)
