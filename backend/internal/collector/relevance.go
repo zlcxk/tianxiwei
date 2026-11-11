@@ -119,21 +119,83 @@ func (e Entity) relatedHits(text string) []string {
 	return hits
 }
 
+// platformAliases normalizes human-written platform names to a stable key.
+// Verified accounts may optionally be written as "平台:账号" or "平台@账号".
+var platformAliases = map[string]string{
+	"微博": "weibo", "weibo": "weibo", "新浪微博": "weibo",
+	"小红书": "xiaohongshu", "xiaohongshu": "xiaohongshu", "xhs": "xiaohongshu",
+	"抖音": "douyin", "douyin": "douyin",
+	"哔哩哔哩": "bilibili", "bilibili": "bilibili", "b站": "bilibili", "bili": "bilibili",
+	"知乎": "zhihu", "zhihu": "zhihu",
+	"微信": "weixin", "weixin": "weixin", "微信公众号": "weixin", "公众号": "weixin",
+	"百度": "baidu", "baidu": "baidu", "百科": "baike", "baike": "baike",
+}
+
+func normalizeAccount(value string) string {
+	value = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(value), "@"))
+	return strings.ToLower(strings.Join(strings.Fields(value), " "))
+}
+
+func normalizePlatform(value string) string {
+	key := normalizeAccount(value)
+	if canonical, ok := platformAliases[key]; ok {
+		return canonical
+	}
+	return key
+}
+
+// parseVerifiedAccount splits an optional platform prefix from the account
+// identity. Plain account names remain supported for existing configurations.
+func parseVerifiedAccount(raw string) (platform, account string, hasPlatform bool) {
+	raw = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "@"))
+	if raw == "" {
+		return "", "", false
+	}
+	for _, sep := range []string{"：", ":", "@"} {
+		idx := strings.Index(raw, sep)
+		if idx <= 0 {
+			continue
+		}
+		left := normalizeAccount(raw[:idx])
+		canonical, known := platformAliases[left]
+		if !known {
+			continue
+		}
+		account = normalizeAccount(raw[idx+len(sep):])
+		if account == "" {
+			return "", "", false
+		}
+		return canonical, account, true
+	}
+	return "", normalizeAccount(raw), false
+}
+
+// accountVerified requires an exact account identity match. Platform labels
+// and the display origin name are never treated as account evidence, and
+// partial substring matches are rejected. When the configured account names a
+// platform, the result must come from that same platform.
 func (e Entity) accountVerified(input EvaluateInput) bool {
 	if len(e.VerifiedAccounts) == 0 {
 		return false
 	}
-	haystack := strings.ToLower(strings.Join([]string{
-		input.Author, input.OriginName, input.OriginPlatform,
-	}, " "))
-	if strings.TrimSpace(haystack) == "" {
+	author := normalizeAccount(input.Author)
+	if author == "" {
 		return false
 	}
-	for _, account := range e.VerifiedAccounts {
-		account = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(account, "@")))
-		if account != "" && strings.Contains(haystack, account) {
-			return true
+	// A bare platform label is never an account identity.
+	if _, isPlatformLabel := platformAliases[author]; isPlatformLabel {
+		return false
+	}
+	resultPlatform := normalizePlatform(input.OriginPlatform)
+	for _, raw := range e.VerifiedAccounts {
+		platform, account, hasPlatform := parseVerifiedAccount(raw)
+		if account == "" || account != author {
+			continue
 		}
+		if hasPlatform && platform != resultPlatform {
+			continue
+		}
+		return true
 	}
 	return false
 }
@@ -178,8 +240,17 @@ type RelevanceResult struct {
 	Reason string
 }
 
+// Filtered reports an explicit exclusion. Such results are rejected
+// immediately instead of entering manual review.
 func (r RelevanceResult) Filtered() bool {
 	return r.Label == LabelFiltered
+}
+
+// LowConfidence reports a below-threshold result retained for review because
+// the available context is insufficient to decide exclusion. Scores and
+// thresholds are unchanged; only the review outcome differs.
+func (r RelevanceResult) LowConfidence() bool {
+	return r.Label == LabelCandidate && r.FilterReason == FilterInsufficientCtx
 }
 
 func filtered(reason, detail string) RelevanceResult {
@@ -281,6 +352,12 @@ func Evaluate(entity Entity, input EvaluateInput) RelevanceResult {
 			result.FilterReason = FilterIrrelevantPerson
 		default:
 			result.FilterReason = FilterInsufficientCtx
+		}
+		if result.FilterReason == FilterInsufficientCtx {
+			// Insufficient context is not proof of irrelevance. Keep the low
+			// score but route the candidate to manual review instead of
+			// rejecting it outright.
+			result.Label = LabelCandidate
 		}
 	}
 

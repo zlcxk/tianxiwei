@@ -181,7 +181,7 @@ export const filterReasonLabels: Record<string, string> = {
   ambiguous_entity: '实体指向不明确',
   dictionary_content: '姓氏/字典内容',
   unrelated_person: '其他人物内容',
-  insufficient_context: '缺少人物上下文',
+  insufficient_context: '上下文不足 / 低置信',
   duplicate_content: '重复内容',
   invalid_source: '来源无效',
 }

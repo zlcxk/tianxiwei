@@ -171,28 +171,38 @@ func DecideReview(source models.Source, text string, sceneCount int) ReviewDecis
 	return ReviewDecision{ReviewStatus: "none", ContentStatus: "published"}
 }
 
-func InferContentType(source models.Source, text string) string {
+// inferContentTypeFromText looks for concrete content-type signals in the
+// actual title, summary or page metadata. The boolean reports whether a
+// positive signal was found; source-type defaults are handled by the caller.
+func inferContentTypeFromText(text string) (string, bool) {
 	lower := strings.ToLower(text)
 	switch {
 	case strings.Contains(lower, "采访") || strings.Contains(lower, "专访") || strings.Contains(lower, "访谈"):
-		return "interview"
+		return "interview", true
 	case strings.Contains(lower, "视频") || strings.Contains(lower, "直播") || strings.Contains(lower, "vlog"):
-		return "video"
+		return "video", true
 	case strings.Contains(lower, "综艺") && strings.Contains(lower, "节目"):
-		return "variety"
+		return "variety", true
 	case strings.Contains(lower, "剧集") || strings.Contains(lower, "角色") || strings.Contains(lower, "开播") ||
 		strings.Contains(lower, "电视剧") || strings.Contains(lower, "开机") || strings.Contains(lower, "杀青") ||
 		strings.Contains(lower, "定档") || strings.Contains(lower, "剧照"):
-		return "work"
+		return "work", true
 	case strings.Contains(lower, "品牌") || strings.Contains(lower, "代言") || strings.Contains(lower, "商务"):
-		return "fashion"
+		return "fashion", true
 	case strings.Contains(lower, "写真") || strings.Contains(lower, "杂志") || strings.Contains(lower, "造型") || strings.Contains(lower, "图集"):
-		return "image"
+		return "image", true
 	case strings.Contains(lower, "发布会") || strings.Contains(lower, "见面会") || strings.Contains(lower, "红毯") ||
 		strings.Contains(lower, "活动") || strings.Contains(lower, "出席"):
-		return "event"
+		return "event", true
 	case strings.Contains(lower, "官方公告") || strings.Contains(lower, "声明") || strings.Contains(lower, "公告"):
-		return "official"
+		return "official", true
+	}
+	return "", false
+}
+
+func InferContentType(source models.Source, text string) string {
+	if contentType, ok := inferContentTypeFromText(text); ok {
+		return contentType
 	}
 	switch source.SourceType {
 	case "official":

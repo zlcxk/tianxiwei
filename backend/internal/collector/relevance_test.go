@@ -74,20 +74,130 @@ func TestEvaluateAliasInTitleCounts(t *testing.T) {
 	}
 }
 
-func TestEvaluateWorkOnlyIsFiltered(t *testing.T) {
+func TestEvaluateWorkOnlyGoesToLowConfidenceReview(t *testing.T) {
 	got := Evaluate(testEntity(), EvaluateInput{
 		Title:          "《逐玉》发布定档预告",
 		Summary:        "古装爱情剧逐玉今日发布定档预告片。",
 		MetadataStatus: "ok",
 	})
-	if got.Label != LabelFiltered {
-		t.Fatalf("label = %q, want filtered (score %d)", got.Label, got.Score)
+	if got.Label != LabelCandidate {
+		t.Fatalf("label = %q, want candidate for review (score %d)", got.Label, got.Score)
+	}
+	if !got.LowConfidence() {
+		t.Fatalf("LowConfidence = false, reason %q", got.FilterReason)
 	}
 	if got.FilterReason != FilterInsufficientCtx {
 		t.Fatalf("filter reason = %q, want %q", got.FilterReason, FilterInsufficientCtx)
 	}
 	if got.Score != ScoreRelated {
 		t.Fatalf("score = %d, want %d", got.Score, ScoreRelated)
+	}
+}
+
+func TestEvaluateExplicitIrrelevanceIsFiltered(t *testing.T) {
+	got := Evaluate(testEntity(), EvaluateInput{
+		Title:          "某品牌发布新款手袋",
+		Summary:        "该品牌今日发布新款手袋，售价与上市时间同步公布。",
+		MetadataStatus: "ok",
+	})
+	if got.Label != LabelFiltered {
+		t.Fatalf("label = %q, want filtered (score %d)", got.Label, got.Score)
+	}
+	if got.FilterReason != FilterIrrelevantPerson {
+		t.Fatalf("filter reason = %q, want %q", got.FilterReason, FilterIrrelevantPerson)
+	}
+	if got.LowConfidence() {
+		t.Fatal("explicit irrelevant result reported as low confidence")
+	}
+}
+
+func TestEvaluateBlockedShortRelevantGoesToReview(t *testing.T) {
+	// The page is blocked, so only a short search snippet is available. The
+	// full name appears but there is too little context to judge the result.
+	got := Evaluate(testEntity(), EvaluateInput{
+		Title:          "今日动态更新",
+		Summary:        "田曦薇",
+		MetadataStatus: "blocked",
+	})
+	if got.Label != LabelCandidate || !got.LowConfidence() {
+		t.Fatalf("label = %q lowConfidence=%v score=%d, want low-confidence candidate",
+			got.Label, got.LowConfidence(), got.Score)
+	}
+	if got.Filtered() {
+		t.Fatal("blocked but relevant result was auto-filtered")
+	}
+	if got.FilterReason != FilterInsufficientCtx {
+		t.Fatalf("filter reason = %q, want %q", got.FilterReason, FilterInsufficientCtx)
+	}
+
+	// A name in the title already reaches the review band even when the page
+	// is blocked and the summary is empty.
+	got = Evaluate(testEntity(), EvaluateInput{
+		Title:          "田曦薇更新动态",
+		Summary:        "",
+		MetadataStatus: "blocked",
+	})
+	if got.Label != LabelCandidate || got.Filtered() {
+		t.Fatalf("title-only blocked result label = %q filtered=%v, want candidate for review",
+			got.Label, got.Filtered())
+	}
+}
+
+func TestEvaluateVerifiedAccountRequiresExactIdentity(t *testing.T) {
+	cases := []struct {
+		name         string
+		accounts     []string
+		input        EvaluateInput
+		wantVerified bool
+	}{
+		{
+			name:         "exact plain account",
+			accounts:     []string{"田曦薇工作室"},
+			input:        EvaluateInput{Title: "今日公开行程更新", Summary: "工作室发布最新行程安排。", Author: "田曦薇工作室", OriginPlatform: "微博", MetadataStatus: "ok"},
+			wantVerified: true,
+		},
+		{
+			name:         "partial account name",
+			accounts:     []string{"田曦薇工作室"},
+			input:        EvaluateInput{Title: "今日公开行程更新", Summary: "工作室发布最新行程安排。", Author: "田曦薇工作室官方", OriginPlatform: "微博", MetadataStatus: "ok"},
+			wantVerified: false,
+		},
+		{
+			name:         "origin name is not account identity",
+			accounts:     []string{"田曦薇工作室"},
+			input:        EvaluateInput{Title: "今日公开行程更新", Summary: "工作室发布最新行程安排。", Author: "某娱乐博主", OriginName: "田曦薇工作室", MetadataStatus: "ok"},
+			wantVerified: false,
+		},
+		{
+			name:         "platform qualified match",
+			accounts:     []string{"weibo:田曦薇"},
+			input:        EvaluateInput{Title: "今日公开行程更新", Summary: "工作室发布最新行程安排。", Author: "田曦薇", OriginPlatform: "微博", MetadataStatus: "ok"},
+			wantVerified: true,
+		},
+		{
+			name:         "platform qualified mismatch",
+			accounts:     []string{"weibo:田曦薇"},
+			input:        EvaluateInput{Title: "今日公开行程更新", Summary: "工作室发布最新行程安排。", Author: "田曦薇", OriginPlatform: "抖音", MetadataStatus: "ok"},
+			wantVerified: false,
+		},
+		{
+			name:         "platform label alone",
+			accounts:     []string{"weibo:微博"},
+			input:        EvaluateInput{Title: "今日公开行程更新", Summary: "工作室发布最新行程安排。", Author: "微博", OriginPlatform: "微博", MetadataStatus: "ok"},
+			wantVerified: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entity := testEntity()
+			entity.VerifiedAccounts = tc.accounts
+			got := Evaluate(entity, tc.input)
+			verified := got.Score >= ScoreVerifiedAccount
+			if verified != tc.wantVerified {
+				t.Fatalf("verified=%v score=%d reason=%s, want verified=%v",
+					verified, got.Score, got.Reason, tc.wantVerified)
+			}
+		})
 	}
 }
 
@@ -127,8 +237,11 @@ func TestEvaluateLowContextPenalty(t *testing.T) {
 		Author:         "田曦薇工作室",
 		MetadataStatus: "failed",
 	})
-	if got.Label != LabelFiltered {
-		t.Fatalf("label = %q, want filtered (score %d)", got.Label, got.Score)
+	if got.Score != ScoreVerifiedAccount-lowContextPenalty {
+		t.Fatalf("score = %d, want %d", got.Score, ScoreVerifiedAccount-lowContextPenalty)
+	}
+	if got.Label != LabelCandidate || !got.LowConfidence() {
+		t.Fatalf("label = %q lowConfidence=%v, want low-confidence candidate", got.Label, got.LowConfidence())
 	}
 	if got.FilterReason != FilterInsufficientCtx {
 		t.Fatalf("filter reason = %q, want %q", got.FilterReason, FilterInsufficientCtx)

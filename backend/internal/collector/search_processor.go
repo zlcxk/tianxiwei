@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"xiweispace/backend/internal/discovery"
@@ -18,6 +19,13 @@ import (
 // success, so late-indexed results are not lost. URL dedupe keeps repeated
 // results from being inserted twice.
 const DefaultSearchOverlap = 7 * 24 * time.Hour
+
+// Metadata fetches are bounded independently of the task deadline: at most
+// four pages are read at once, each with a short per-page timeout.
+const (
+	metadataConcurrency  = 4
+	metadataFetchTimeout = 7 * time.Second
+)
 
 type SearchProcessor struct {
 	Store    *store.Store
@@ -68,6 +76,74 @@ func resolveSourceTrust(identity discovery.SourceIdentity, taskTrust string) str
 	default:
 		return "media"
 	}
+}
+
+type pageFetcher interface {
+	Fetch(context.Context, string) (discovery.PageMetadata, error)
+}
+
+type metadataOutcome struct {
+	meta   discovery.PageMetadata
+	status string
+	errMsg string
+	err    error
+}
+
+// fetchMetadataBatch reads page metadata with a bounded worker pool. Results
+// are written by index, so output order always matches input order even though
+// fetches complete out of order. Every candidate keeps its own timeout, and
+// cancellation marks unprocessed candidates as not attempted.
+func fetchMetadataBatch(ctx context.Context, fetcher pageFetcher, urls []string) []metadataOutcome {
+	outcomes := make([]metadataOutcome, len(urls))
+	for i := range outcomes {
+		outcomes[i].status = "not_attempted"
+	}
+	jobQueue := make(chan int)
+	workers := metadataConcurrency
+	if workers > len(urls) {
+		workers = len(urls)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobQueue {
+				if ctx.Err() != nil {
+					outcomes[index].status = "not_attempted"
+					outcomes[index].err = ctx.Err()
+					continue
+				}
+				fctx, fcancel := context.WithTimeout(ctx, metadataFetchTimeout)
+				meta, err := fetcher.Fetch(fctx, urls[index])
+				fcancel()
+				outcomes[index].meta = meta
+				outcomes[index].err = err
+				switch {
+				case err == nil:
+					outcomes[index].status = "ok"
+				case errors.Is(err, discovery.ErrBlockedResponse) || errors.Is(err, discovery.ErrBlockedURL):
+					outcomes[index].status = "blocked"
+					outcomes[index].errMsg = truncateRunes(err.Error(), 300)
+				default:
+					outcomes[index].status = "failed"
+					outcomes[index].errMsg = truncateRunes(err.Error(), 300)
+				}
+			}
+		}()
+	}
+	for index := range urls {
+		select {
+		case jobQueue <- index:
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	close(jobQueue)
+	wg.Wait()
+	return outcomes
 }
 
 func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task models.SearchTask) {
@@ -160,15 +236,20 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 		results = results[:task.MaxResults]
 	}
 
-	fetched, inserted, duplicates, failed, parsedOK, parseFailed := len(results), 0, 0, 0, 0, 0
-	filteredCount := 0
+	fetched := len(results)
+	inserted, duplicates, failed, parsedOK, parseFailed := 0, 0, 0, 0, 0
+	filteredCount, lowConfidenceCount := 0, 0
+
+	type candidate struct {
+		result    discovery.SearchResult
+		title     string
+		summary   string
+		canonical string
+		urlHash   string
+	}
+	candidates := make([]candidate, 0, len(results))
 	seen := map[string]bool{}
-	itemErrors := make([]string, 0, 3)
 	for _, result := range results {
-		if ctx.Err() != nil {
-			failed++
-			continue
-		}
 		title := stripHTML(result.Title)
 		summary := stripHTML(result.Snippet)
 		canonical := canonicalURL(result.URL)
@@ -187,77 +268,88 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 			continue
 		}
 		seen[urlHash] = true
+		candidates = append(candidates, candidate{
+			result: result, title: title, summary: summary,
+			canonical: canonical, urlHash: urlHash,
+		})
+	}
+
+	// Fetch page metadata concurrently. Every candidate has an independent
+	// timeout and writes to its own index, so the result order stays identical
+	// to the search order and no URL is fetched twice.
+	urls := make([]string, len(candidates))
+	for i := range candidates {
+		urls[i] = candidates[i].canonical
+	}
+	outcomes := fetchMetadataBatch(ctx, p.Fetcher, urls)
+
+	itemErrors := make([]string, 0, 3)
+	for i, current := range candidates {
+		if ctx.Err() != nil {
+			failed++
+			continue
+		}
+		outcome := outcomes[i]
+		meta := outcome.meta
+		metaStatus := outcome.status
+		metaError := outcome.errMsg
+		switch metaStatus {
+		case "ok":
+			parsedOK++
+		case "blocked", "failed":
+			parseFailed++
+		}
+		if outcome.err != nil {
+			log.Debug("metadata unavailable", "url", current.canonical, "error", outcome.err)
+		}
 
 		// Identify the publisher from each result URL. The task configuration is
 		// never used as evidence of official identity and never overwrites what
 		// the host itself proves.
-		identity := discovery.IdentifySource(canonical)
+		identity := discovery.IdentifySource(current.canonical)
 		originName, platform, originType := identity.Name, identity.Platform, identity.SourceType
 		if originName == "" {
-			originName = result.SourceName
+			originName = current.result.SourceName
 		}
 		if platform == "" {
-			platform = result.Platform
+			platform = current.result.Platform
 		}
 		trustLevel := resolveSourceTrust(identity, task.TrustLevel)
 		// is_official marks an official-source page (currently the recognized
 		// official-media domains). It does not mean the artist's verified account;
 		// that requires exact account identity matching in relevance scoring.
 		isOfficial := identity.Known && identity.SourceType == "official"
-		meta := discovery.PageMetadata{}
-		metaStatus := "not_attempted"
-		metaError := ""
-		fctx, fcancel := context.WithTimeout(ctx, 7*time.Second)
-		meta, err := p.Fetcher.Fetch(fctx, canonical)
-		fcancel()
-		switch {
-		case err == nil:
-			metaStatus = "ok"
-			parsedOK++
-		case errors.Is(err, discovery.ErrBlockedResponse) || errors.Is(err, discovery.ErrBlockedURL):
-			metaStatus = "blocked"
-			metaError = truncateRunes(err.Error(), 300)
-			parseFailed++
-		default:
-			metaStatus = "failed"
-			metaError = truncateRunes(err.Error(), 300)
-			parseFailed++
-		}
-		if err != nil {
-			log.Debug("metadata unavailable", "url", canonical, "error", err)
-		}
 
+		title, summary := current.title, current.summary
 		if meta.Title != "" {
 			title = meta.Title
 		}
 		if meta.Description != "" {
 			summary = meta.Description
 		}
-		author := meta.Author
-		if author == "" {
-			author = originName
+		// Only the account reported by the page itself may count as account
+		// identity. The stored author still falls back to the source name.
+		accountName := strings.TrimSpace(meta.Author)
+		storedAuthor := accountName
+		if storedAuthor == "" {
+			storedAuthor = originName
 		}
 
 		published := meta.PublishedAt
 		precision := "verified"
-		if published == nil && result.PublishedAt != nil {
-			published = result.PublishedAt
+		if published == nil && current.result.PublishedAt != nil {
+			published = current.result.PublishedAt
 			precision = "estimated"
 		}
 		if published == nil {
 			precision = "unknown"
 		}
 
-		pseudoSource := models.Source{SourceType: originType, TrustLevel: trustLevel}
-		contentType := task.ContentTypeHint
-		if contentType == "" {
-			contentType = InferContentType(pseudoSource, title+" "+summary)
-			contentType = searchContentType(contentType, originType)
-		}
+		contentType := resolveSearchContentType(identity, title, summary, task.ContentTypeHint)
 		relevance := Evaluate(entity, EvaluateInput{
 			Title:          title,
 			Summary:        summary,
-			Author:         author,
+			Author:         accountName,
 			OriginName:     originName,
 			OriginPlatform: platform,
 			MetadataStatus: metaStatus,
@@ -270,27 +362,30 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 		if metaStatus == "blocked" {
 			reason += "；目标页面限制自动读取"
 		}
-		// Filtered candidates are still inserted for auditability, but they are
-		// rejected immediately so they never enter the manual review queue.
+		// Explicitly irrelevant results are rejected immediately. Candidates
+		// whose context is merely insufficient stay pending for manual review.
 		reviewStatus, contentStatus := "pending", "pending"
-		if relevance.Filtered() {
+		switch {
+		case relevance.Filtered():
 			reviewStatus, contentStatus = "rejected", "rejected"
 			reason = "自动过滤：" + relevance.Reason
 			if metaStatus == "blocked" {
 				reason += "；目标页面限制自动读取"
 			}
-		} else {
+		case relevance.LowConfidence():
+			reason = "低置信候选（上下文不足，待人工核验）：" + relevance.Reason + "；" + reason
+		default:
 			reason = relevance.Reason + "；" + reason
 		}
 		raw, _ := json.Marshal(map[string]any{
 			"discovery": map[string]any{
-				"provider":            result.Provider,
+				"provider":            current.result.Provider,
 				"search_task_id":      task.ID,
 				"search_task_name":    task.Name,
 				"query":               task.Query,
-				"search_title":        result.Title,
-				"search_snippet":      result.Snippet,
-				"search_published_at": result.PublishedAt,
+				"search_title":        current.result.Title,
+				"search_snippet":      current.result.Snippet,
+				"search_published_at": current.result.PublishedAt,
 				"domains":             task.Domains,
 			},
 			"metadata": map[string]any{
@@ -312,10 +407,10 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 			Title:              truncateRunes(title, 300),
 			Summary:            truncateRunes(summary, 1200),
 			ContentType:        contentType,
-			Author:             truncateRunes(author, 120),
-			URL:                canonical,
+			Author:             truncateRunes(storedAuthor, 120),
+			URL:                current.canonical,
 			CoverURL:           "",
-			URLHash:            urlHash,
+			URLHash:            current.urlHash,
 			ContentHash:        contentFingerprint(title, summary),
 			PublishedAt:        published,
 			PublishedPrecision: precision,
@@ -337,7 +432,7 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 		})
 		if err != nil {
 			failed++
-			log.Warn("insert search candidate failed", "url", canonical, "error", err)
+			log.Warn("insert search candidate failed", "url", current.canonical, "error", err)
 			if len(itemErrors) < 2 {
 				itemErrors = append(itemErrors, err.Error())
 			}
@@ -349,6 +444,9 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 			inserted++
 			if relevance.Filtered() {
 				filteredCount++
+			}
+			if relevance.LowConfidence() {
+				lowConfidenceCount++
 			}
 		}
 	}
@@ -377,9 +475,43 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 	}
 	log.Info("search finished", "status", status,
 		"fetched", fetched, "inserted", inserted, "duplicates", duplicates,
-		"failed", failed, "filtered", filteredCount,
+		"failed", failed, "filtered", filteredCount, "low_confidence", lowConfidenceCount,
 		"metadata_ok", parsedOK, "metadata_failed", parseFailed,
 		"success_count", inserted, "failure_count", failed, "duration", duration())
+}
+
+// resolveSearchContentType prefers signals from the actual result page, then
+// from the recognized platform, and only falls back to the task hint when the
+// result itself offers no type signal.
+func resolveSearchContentType(identity discovery.SourceIdentity, title, summary, hint string) string {
+	if inferred, ok := inferContentTypeFromText(title + " " + summary); ok {
+		return searchContentType(inferred, identity.SourceType)
+	}
+	if identity.Known {
+		switch identity.Name {
+		case "哔哩哔哩", "抖音":
+			return "video"
+		case "微博", "小红书", "知乎", "微信公众号":
+			return "post"
+		case "百科资料", "百度":
+			return "other"
+		case "官方媒体", "搜狐", "新浪", "网易", "腾讯新闻", "凤凰网", "澎湃新闻":
+			return "news"
+		}
+	}
+	if hint := strings.TrimSpace(hint); hint != "" {
+		return hint
+	}
+	switch identity.SourceType {
+	case "community":
+		return "post"
+	case "official":
+		return "news"
+	case "reference":
+		return "other"
+	default:
+		return "other"
+	}
 }
 
 func searchContentType(inferred, originType string) string {

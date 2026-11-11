@@ -676,8 +676,8 @@ onMounted(loadAll)
             </div>
             <div>
               <label for="entity-accounts" class="field-label">已验证账号（逗号分隔）</label>
-              <input id="entity-accounts" v-model="entityForm.verified_accounts" class="field" placeholder="例如：田曦薇工作室" />
-              <p class="mt-1 text-[10px] text-muted">仅填写已人工核验的官方或本人账号，命中后加 25 分。</p>
+              <input id="entity-accounts" v-model="entityForm.verified_accounts" class="field" placeholder="例如：weibo:田曦薇 或 田曦薇工作室" />
+              <p class="mt-1 text-[10px] text-muted">仅填写已人工核验的官方或本人账号，命中后加 25 分。建议写成「平台:账号」；系统只做账号全名精确匹配，不接受部分包含或平台名本身。</p>
             </div>
             <div>
               <label for="entity-excluded" class="field-label">排除词（逗号或换行分隔）</label>
