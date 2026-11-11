@@ -55,6 +55,8 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/scenes", s.listScenes)
 		r.Get("/events", s.listEvents)
 		r.Get("/events/{id}", s.getEvent)
+		// Uploaded images are public assets; upload itself is admin-only.
+		r.Get("/media/{filename}", s.publicMedia)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
@@ -69,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(s.requireAdmin)
 			r.Get("/overview", s.adminOverview)
+			r.Post("/media/images", s.adminUploadImage)
 			r.Get("/sources", s.adminListSources)
 			r.Post("/sources", s.adminCreateSource)
 			r.Patch("/sources/{id}", s.adminUpdateSource)

@@ -17,6 +17,8 @@ frontend/.vite/
 # Go
 backend/coverage.out
 backend/tmp/
+# 本地上传图片（生产使用 Docker 命名卷）
+backend/data/
 
 # 系统与编辑器
 .DS_Store

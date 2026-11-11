@@ -13,6 +13,99 @@ import (
 // TestDiscoveryTimelineIntegration covers the search-candidate insert path, the
 // publication/discovery time split, stable cursor ordering, and event linking.
 // It is skipped unless TEST_DATABASE_URL points at a disposable database.
+// TestDiscoveredCoverIntegration verifies the image path end to end: a cover
+// parsed from the article page is stored, duplicate search results never
+// overwrite it, and a manually curated cover survives later search duplicates.
+func TestDiscoveredCoverIntegration(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set TEST_DATABASE_URL to run store integration tests")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	pool, err := db.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	if err := db.Migrate(ctx, pool, true); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	s := New(pool)
+	providers, err := s.ListSearchProviders(ctx)
+	if err != nil || len(providers) == 0 {
+		t.Fatalf("list providers: %v (n=%d)", err, len(providers))
+	}
+	taskName := fmt.Sprintf("cover-test-%d", time.Now().UnixNano())
+	task, err := s.CreateSearchTask(ctx, SearchTaskInput{
+		Name: taskName, ProviderID: providers[0].ID, Query: "田曦薇",
+		SourceType: "media", TrustLevel: "media", IntervalMinutes: 60, MaxResults: 5,
+	})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	prefix := fmt.Sprintf("CoverTest-%d", time.Now().UnixNano())
+	url := fmt.Sprintf("https://example.com/cover/%d", time.Now().UnixNano())
+	urlHash := testHash(url)
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		_, _ = pool.Exec(cleanupCtx, `DELETE FROM contents WHERE title LIKE $1`, prefix+"%")
+		_, _ = pool.Exec(cleanupCtx, `DELETE FROM search_tasks WHERE id=$1::uuid`, task.ID)
+	})
+
+	insert := func(cover string) string {
+		status, err := s.InsertDiscovered(ctx, DiscoveredContent{
+			SearchTaskID: task.ID, Title: prefix + "-cover", Summary: "integration",
+			ContentType: "news", Author: "test", URL: url, URLHash: urlHash,
+			CoverURL: cover, PublishedPrecision: "unknown",
+			OriginName: "Example News", OriginPlatform: "example.com", OriginType: "media",
+			MetadataStatus: "ok", TrustLevel: "media", ReviewStatus: "approved", ContentStatus: "published",
+		})
+		if err != nil {
+			t.Fatalf("insert discovered cover: %v", err)
+		}
+		return status
+	}
+	readCover := func() (string, string) {
+		items, _, err := s.ListContents(ctx, ContentFilter{Keyword: prefix, Limit: 1})
+		if err != nil || len(items) != 1 {
+			t.Fatalf("read content: %v (n=%d)", err, len(items))
+		}
+		return items[0].ID, items[0].CoverURL
+	}
+
+	if status := insert("https://cdn.example.com/a.jpg"); status != Inserted {
+		t.Fatalf("first insert status = %q, want inserted", status)
+	}
+	id, cover := readCover()
+	if cover != "https://cdn.example.com/a.jpg" {
+		t.Fatalf("stored cover = %q", cover)
+	}
+
+	if status := insert("https://cdn.example.com/b.jpg"); status != Duplicate {
+		t.Fatalf("duplicate insert status = %q, want duplicate", status)
+	}
+	if _, cover := readCover(); cover != "https://cdn.example.com/a.jpg" {
+		t.Fatalf("duplicate search overwrote cover: %q", cover)
+	}
+
+	manual := "https://media.example.com/manual.jpg"
+	if _, err := s.UpdateContent(ctx, id, "", ContentPatch{CoverURL: &manual}, "manual cover"); err != nil {
+		t.Fatalf("manual cover update: %v", err)
+	}
+	if _, cover := readCover(); cover != manual {
+		t.Fatalf("manual cover not stored: %q", cover)
+	}
+	if status := insert("https://cdn.example.com/c.jpg"); status != Duplicate {
+		t.Fatalf("duplicate insert status = %q, want duplicate", status)
+	}
+	if _, cover := readCover(); cover != manual {
+		t.Fatalf("search duplicate overwrote manual cover: %q", cover)
+	}
+}
+
 func TestDiscoveryTimelineIntegration(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

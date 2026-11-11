@@ -8,6 +8,7 @@ import { toast } from '../../stores/toast'
 import AdminPageHeader from './AdminPageHeader.vue'
 import CoverArt from '../../components/CoverArt.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ImagePicker from '../../components/ImagePicker.vue'
 import LoadingBlock from '../../components/LoadingBlock.vue'
 import Modal from '../../components/Modal.vue'
 
@@ -390,8 +391,13 @@ onMounted(load)
             />
           </div>
           <div>
-            <label for="pick-cover" class="field-label">封面地址（可选，需已获授权）</label>
-            <input id="pick-cover" v-model="form.cover_url" class="field" placeholder="留空则使用内容封面或站内抽象封面" />
+            <ImagePicker
+              id="pick-cover"
+              v-model="form.cover_url"
+              label="封面（可选，需已获授权）"
+              aspect="wide"
+              hint="16:9 精选配图；留空则使用内容封面或站内抽象封面"
+            />
           </div>
         </div>
 

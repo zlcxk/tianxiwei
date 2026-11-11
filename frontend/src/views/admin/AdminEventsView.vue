@@ -7,6 +7,7 @@ import { formatDate } from '../../lib/format'
 import { toast } from '../../stores/toast'
 import AdminPageHeader from './AdminPageHeader.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ImagePicker from '../../components/ImagePicker.vue'
 import LoadingBlock from '../../components/LoadingBlock.vue'
 import Modal from '../../components/Modal.vue'
 
@@ -242,8 +243,13 @@ onMounted(load)
           <input id="event-location" v-model="form.location" class="field" placeholder="例如：上海" />
         </div>
         <div>
-          <label for="event-cover" class="field-label">封面地址（可选，需已获授权）</label>
-          <input id="event-cover" v-model="form.cover_url" class="field" placeholder="留空则使用站内抽象封面" />
+          <ImagePicker
+            id="event-cover"
+            v-model="form.cover_url"
+            label="封面（可选，需已获授权）"
+            aspect="wide"
+            hint="16:9 活动主视觉；留空则使用站内抽象封面"
+          />
         </div>
       </div>
       <template #footer>

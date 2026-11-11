@@ -32,6 +32,9 @@ services:
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       SEED_ON_START: "true"
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
+      MEDIA_DIR: /app/data/media
+    volumes:
+      - xiwei_media:/app/data/media
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,6 +74,7 @@ services:
 
 volumes:
   xiwei_pgdata:
+  xiwei_media:
 
 networks:
   internal:

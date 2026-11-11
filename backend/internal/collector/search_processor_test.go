@@ -61,6 +61,33 @@ func TestSearchSince(t *testing.T) {
 	}
 }
 
+func TestResolveSearchCoverURL(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"public https image", "https://cdn.example.com/a.jpg", "https://cdn.example.com/a.jpg"},
+		{"public http image", "http://cdn.example.com/a.png", "http://cdn.example.com/a.png"},
+		{"trims whitespace", "  https://cdn.example.com/a.webp  ", "https://cdn.example.com/a.webp"},
+		{"empty stays empty", "", ""},
+		{"rejects javascript scheme", "javascript:alert(1)", ""},
+		{"rejects data uri", "data:image/png;base64,AAAA", ""},
+		{"rejects localhost", "http://localhost/a.jpg", ""},
+		{"rejects loopback ip", "http://127.0.0.1/a.jpg", ""},
+		{"rejects internal suffix", "http://printer.internal/a.jpg", ""},
+		{"rejects credentials", "https://user:pass@cdn.example.com/a.jpg", ""},
+		{"rejects non-standard port", "https://cdn.example.com:8443/a.jpg", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveSearchCoverURL(tc.raw); got != tc.want {
+				t.Fatalf("resolveSearchCoverURL(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestResolveSearchContentType(t *testing.T) {
 	cases := []struct {
 		name    string

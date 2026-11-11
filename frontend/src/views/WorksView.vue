@@ -11,13 +11,14 @@ import LoadingBlock from '../components/LoadingBlock.vue'
 const works = ref<Work[]>([])
 const loading = ref(true)
 const error = ref('')
-const filter = ref<'all' | 'drama' | 'movie' | 'variety'>('all')
+const filter = ref<'all' | 'drama' | 'movie' | 'variety' | 'other'>('all')
 
 const typeFilters: { value: typeof filter.value; label: string }[] = [
   { value: 'all', label: '全部' },
   { value: 'drama', label: '剧集' },
   { value: 'movie', label: '电影' },
   { value: 'variety', label: '综艺' },
+  { value: 'other', label: '其他' },
 ]
 
 const filtered = computed(() =>

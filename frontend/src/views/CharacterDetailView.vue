@@ -18,10 +18,12 @@ const error = ref('')
 const characterId = computed(() => String(route.params.id || ''))
 const character = computed(() => detail.value?.character || null)
 const work = computed(() => character.value?.work || null)
+const avatarFailed = ref(false)
 
 async function load() {
   loading.value = true
   error.value = ''
+  avatarFailed.value = false
   try {
     detail.value = await api.get<CharacterDetail>(`/characters/${characterId.value}`)
   } catch (err) {
@@ -62,10 +64,14 @@ watch(characterId, (next, prev) => {
       <header class="grid items-start gap-8 border-b border-line pb-10 md:grid-cols-[.8fr_1.2fr] md:gap-14 md:pb-14">
         <div class="relative aspect-square overflow-hidden border border-line bg-blush/30">
           <img
-            v-if="character.avatar"
+            v-if="character.avatar && !avatarFailed"
             :src="character.avatar"
             :alt="character.name"
             class="h-full w-full object-cover"
+            loading="eager"
+            fetchpriority="high"
+            decoding="async"
+            @error="avatarFailed = true"
           />
           <div v-else class="flex h-full flex-col justify-between p-6 md:p-8">
             <div class="flex items-start justify-between text-[9px] uppercase tracking-[0.2em] text-[#8f5e66]/70">

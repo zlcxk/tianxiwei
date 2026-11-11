@@ -28,6 +28,7 @@ import {
 import { toast } from '../../stores/toast'
 import AdminPageHeader from './AdminPageHeader.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ImagePicker from '../../components/ImagePicker.vue'
 import LoadingBlock from '../../components/LoadingBlock.vue'
 import Modal from '../../components/Modal.vue'
 
@@ -670,8 +671,13 @@ onMounted(async () => {
           <p class="mt-1 text-[10px] text-muted">相同链接的内容不可重复录入，用于去重。</p>
         </div>
         <div class="md:col-span-2">
-          <label for="content-cover" class="field-label">封面地址（可选，需已获授权）</label>
-          <input id="content-cover" v-model="form.cover_url" class="field" placeholder="留空则使用站内抽象封面" />
+          <ImagePicker
+            id="content-cover"
+            v-model="form.cover_url"
+            label="封面（可选，需已获授权）"
+            aspect="wide"
+            hint="16:10 或 1:1 内容封面；留空则使用站内抽象封面"
+          />
         </div>
 
         <div class="md:col-span-2">

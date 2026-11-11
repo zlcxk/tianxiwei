@@ -18,6 +18,9 @@ type Config struct {
 	Environment       string
 	// SearchOverlap is measured back from the last fully successful search run.
 	SearchOverlap time.Duration
+	// MediaDir stores uploaded images. It must point at a persistent volume in
+	// production so uploaded covers survive container restarts.
+	MediaDir string
 }
 
 func Load() Config {
@@ -35,6 +38,7 @@ func Load() Config {
 		SeedOnStart:       envBool("SEED_ON_START", true),
 		Environment:       env("APP_ENV", "development"),
 		SearchOverlap:     time.Duration(overlapDays) * 24 * time.Hour,
+		MediaDir:          env("MEDIA_DIR", "data/media"),
 	}
 }
 

@@ -409,7 +409,7 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 			ContentType:        contentType,
 			Author:             truncateRunes(storedAuthor, 120),
 			URL:                current.canonical,
-			CoverURL:           "",
+			CoverURL:           resolveSearchCoverURL(meta.ImageURL),
 			URLHash:            current.urlHash,
 			ContentHash:        contentFingerprint(title, summary),
 			PublishedAt:        published,
@@ -478,6 +478,22 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 		"failed", failed, "filtered", filteredCount, "low_confidence", lowConfidenceCount,
 		"metadata_ok", parsedOK, "metadata_failed", parseFailed,
 		"success_count", inserted, "failure_count", failed, "duration", duration())
+}
+
+// resolveSearchCoverURL accepts only public http(s) image URLs parsed from the
+// article page. Invalid schemes, credentials, internal hosts and non-standard
+// ports are discarded, so a candidate is still inserted without a cover: an
+// unusable image never fails content insertion or the search run.
+func resolveSearchCoverURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := discovery.ValidatePublicURL(raw)
+	if err != nil {
+		return ""
+	}
+	return u.String()
 }
 
 // resolveSearchContentType prefers signals from the actual result page, then

@@ -15,6 +15,7 @@ import { formatDate, workStatusLabels, workTypeLabels } from '../../lib/format'
 import { toast } from '../../stores/toast'
 import AdminPageHeader from './AdminPageHeader.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ImagePicker from '../../components/ImagePicker.vue'
 import LoadingBlock from '../../components/LoadingBlock.vue'
 import Modal from '../../components/Modal.vue'
 import SceneIcon from '../../components/SceneIcon.vue'
@@ -621,14 +622,20 @@ onMounted(loadAll)
               <label for="artist-bio" class="field-label">简介</label>
               <textarea id="artist-bio" v-model="artistForm.bio" rows="4" class="field resize-y" />
             </div>
-            <div>
-              <label for="artist-avatar" class="field-label">头像地址（需授权）</label>
-              <input id="artist-avatar" v-model="artistForm.avatar" class="field" placeholder="留空使用站内视觉" />
-            </div>
-            <div>
-              <label for="artist-cover" class="field-label">封面地址（需授权）</label>
-              <input id="artist-cover" v-model="artistForm.cover" class="field" placeholder="留空使用站内视觉" />
-            </div>
+            <ImagePicker
+              id="artist-avatar"
+              v-model="artistForm.avatar"
+              label="头像（需授权）"
+              aspect="square"
+              hint="1:1 头像，建议 800×800 以上；留空使用站内视觉"
+            />
+            <ImagePicker
+              id="artist-cover"
+              v-model="artistForm.cover"
+              label="封面（需授权）"
+              aspect="wide"
+              hint="16:9 主视觉，用于首页杂志感人物区；留空使用站内版式"
+            />
           </div>
           <div class="flex justify-end border-t border-line px-5 py-4">
             <button class="btn-primary !min-h-9 text-xs" :disabled="saving === 'artist'" @click="saveArtist">
@@ -949,8 +956,13 @@ onMounted(loadAll)
           <input id="work-url" v-model="workForm.official_url" class="field" placeholder="https://..." />
         </div>
         <div class="sm:col-span-2">
-          <label for="work-cover" class="field-label">封面地址（需授权）</label>
-          <input id="work-cover" v-model="workForm.cover" class="field" />
+          <ImagePicker
+            id="work-cover"
+            v-model="workForm.cover"
+            label="作品封面（需授权）"
+            aspect="portrait"
+            hint="3:4 竖版海报；留空使用站内抽象封面"
+          />
         </div>
         <div class="sm:col-span-2">
           <label for="work-desc" class="field-label">简介</label>
@@ -979,10 +991,13 @@ onMounted(loadAll)
           <label for="char-name" class="field-label">角色名称 *</label>
           <input id="char-name" v-model="characterForm.name" class="field" />
         </div>
-        <div>
-          <label for="char-avatar" class="field-label">角色头像（可选，需授权）</label>
-          <input id="char-avatar" v-model="characterForm.avatar" class="field" />
-        </div>
+        <ImagePicker
+          id="char-avatar"
+          v-model="characterForm.avatar"
+          label="角色头像（可选，需授权）"
+          aspect="square"
+          hint="1:1 角色剧照或头像；请勿使用与角色无关的图片"
+        />
         <div>
           <label for="char-desc" class="field-label">角色简介</label>
           <textarea id="char-desc" v-model="characterForm.description" rows="3" class="field resize-y" />

@@ -27,6 +27,8 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
 WORKDIR /app
 COPY --from=build /out/api /app/api
 COPY --from=build /out/worker /app/worker
+# 上传图片目录。Compose 以命名卷挂载到这里，容器内必须由运行用户可写。
+RUN mkdir -p /app/data/media && chown -R xiwei:xiwei /app/data
 
 USER xiwei
 EXPOSE 8080

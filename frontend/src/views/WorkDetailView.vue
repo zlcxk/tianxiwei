@@ -20,6 +20,14 @@ const workId = computed(() => String(route.params.id || ''))
 const work = computed(() => detail.value?.work || null)
 const characters = computed(() => work.value?.characters || [])
 
+// Broken avatar URLs fall back to the character's initial, so a stale image
+// never leaves a broken icon in the character grid.
+const failedAvatars = ref<Record<string, boolean>>({})
+
+function markAvatarFailed(id: string) {
+  failedAvatars.value[id] = true
+}
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -128,8 +136,17 @@ watch(workId, (next, prev) => {
             :to="{ name: 'character', params: { id: character.id } }"
             class="group flex items-start gap-4 border border-line bg-white/40 p-4 transition hover:border-ink/25 hover:bg-white/70"
           >
-            <span class="flex h-14 w-14 shrink-0 items-center justify-center border border-line bg-blush/40 font-display text-2xl text-[#8f5e66]">
-              {{ character.name.slice(0, 1) }}
+            <span class="relative flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden border border-line bg-blush/40 font-display text-2xl text-[#8f5e66]">
+              <img
+                v-if="character.avatar && !failedAvatars[character.id]"
+                :src="character.avatar"
+                :alt="character.name"
+                class="h-full w-full object-cover"
+                loading="lazy"
+                decoding="async"
+                @error="markAvatarFailed(character.id)"
+              />
+              <template v-else>{{ character.name.slice(0, 1) }}</template>
             </span>
             <div class="min-w-0 flex-1">
               <div class="flex items-center justify-between gap-2">

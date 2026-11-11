@@ -21,6 +21,20 @@ const archive = computed(() => data.value?.archive || [])
 const works = computed(() => data.value?.works?.slice(0, 8) || [])
 const activeScenes = computed(() => data.value?.scenes?.filter((s) => s.code !== 'all') || [])
 const profile = computed(() => (data.value?.artist?.profile_data || {}) as Record<string, string>)
+const artist = computed(() => data.value?.artist || null)
+// The hero prefers the editorial cover, then falls back to the avatar. With
+// neither, the original CSS profile card is kept unchanged.
+const heroImage = computed(() => artist.value?.cover || artist.value?.avatar || '')
+const heroAvatar = computed(() => artist.value?.avatar || '')
+const avatarInitial = computed(() => (artist.value?.name || '田曦薇').trim().slice(0, 1) || '曦')
+const heroFailed = ref(false)
+const avatarFailed = ref(false)
+watch(heroImage, () => {
+  heroFailed.value = false
+})
+watch(heroAvatar, () => {
+  avatarFailed.value = false
+})
 
 const picks = computed(() =>
   (data.value?.picks || []).filter(
@@ -74,6 +88,21 @@ watch(() => auth.user?.id, load)
     <section class="relative overflow-hidden border-b border-line">
       <div class="hero-canvas">
         <div class="shell relative z-10 grid gap-8 py-12 md:grid-cols-[1.15fr_.85fr] md:items-end md:py-20 lg:py-24">
+          <div v-if="heroImage && !heroFailed" class="md:hidden">
+            <div class="relative aspect-[16/10] overflow-hidden border border-line bg-white/30">
+              <img
+                :src="heroImage"
+                :alt="artist?.name || '田曦薇'"
+                class="h-full w-full object-cover object-[center_22%]"
+                loading="eager"
+                fetchpriority="high"
+                decoding="async"
+                @error="heroFailed = true"
+              />
+              <div class="absolute inset-0 bg-gradient-to-t from-ink/35 via-transparent to-transparent" />
+              <span class="absolute bottom-4 left-4 text-[9px] uppercase tracking-[0.24em] text-white/80">Xiwei Space</span>
+            </div>
+          </div>
           <div>
             <div class="flex items-center gap-2.5 text-[10px] uppercase tracking-widest2 text-ink/55">
               <span class="h-1.5 w-1.5 rounded-full bg-accent" />
@@ -107,7 +136,49 @@ watch(() => auth.user?.id, load)
           </div>
 
           <div class="relative hidden md:block">
-            <div class="relative ml-auto w-full max-w-[330px] border border-ink/10 bg-white/35 p-5 backdrop-blur-sm">
+            <div v-if="heroImage" class="relative ml-auto w-full max-w-[330px] border border-ink/10 bg-white/60 p-2 backdrop-blur-sm">
+              <div class="relative aspect-[3/4] overflow-hidden bg-blush/30">
+                <img
+                  v-if="!heroFailed"
+                  :src="heroImage"
+                  :alt="artist?.name || '田曦薇'"
+                  class="h-full w-full object-cover"
+                  loading="eager"
+                  fetchpriority="high"
+                  decoding="async"
+                  @error="heroFailed = true"
+                />
+                <div v-else class="hero-canvas h-full w-full" />
+                <div class="absolute inset-0 bg-gradient-to-t from-ink/50 via-transparent to-transparent" />
+                <span class="vertical-text absolute right-3.5 top-4 text-[9px] tracking-[0.3em] text-white/75">TIAN XIWEI</span>
+                <div class="absolute inset-x-0 bottom-0 p-4 text-white">
+                  <div class="text-[9px] uppercase tracking-[0.2em] text-white/70">Xiwei Space · Portrait</div>
+                  <div class="mt-1 font-display text-2xl tracking-tight">{{ artist?.name || '田曦薇' }}</div>
+                </div>
+              </div>
+              <div class="flex items-center justify-between gap-3 px-2 pb-1 pt-3">
+                <div class="min-w-0">
+                  <div class="text-[9px] uppercase tracking-[0.2em] text-ink/45">Volume 01 / 2026</div>
+                  <div class="mt-0.5 truncate text-[10px] text-ink/55">
+                    {{ profile.birth_place || '重庆' }} · {{ profile.profession || '演员' }}
+                  </div>
+                </div>
+                <img
+                  v-if="heroAvatar && !avatarFailed"
+                  :src="heroAvatar"
+                  :alt="artist?.name || '田曦薇'"
+                  class="h-10 w-10 shrink-0 rounded-full border border-white/70 object-cover"
+                  loading="lazy"
+                  decoding="async"
+                  @error="avatarFailed = true"
+                />
+                <span
+                  v-else
+                  class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-ink/15 bg-blush/50 font-display text-base text-[#8f5e66]"
+                >{{ avatarInitial }}</span>
+              </div>
+            </div>
+            <div v-else class="relative ml-auto w-full max-w-[330px] border border-ink/10 bg-white/35 p-5 backdrop-blur-sm">
               <div class="flex items-start justify-between">
                 <span class="text-[9px] uppercase tracking-[0.2em] text-ink/45">Volume 01 / 2026</span>
                 <span class="vertical-text font-display text-[11px] tracking-[0.3em] text-ink/40">TIAN XIWEI</span>
@@ -244,6 +315,7 @@ watch(() => auth.user?.id, load)
               :meta="spotlight.scene"
               :src="spotlight.cover"
               aspect="auto"
+              priority
               class="h-full"
             />
           </div>

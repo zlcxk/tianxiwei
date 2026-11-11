@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = withDefaults(
   defineProps<{
@@ -9,9 +9,26 @@ const props = withDefaults(
     aspect?: 'portrait' | 'square' | 'wide' | 'auto'
     src?: string
     tone?: number
+    /** Above-the-fold images load eagerly and at high priority. */
+    priority?: boolean
   }>(),
-  { subtitle: '', meta: '', aspect: 'square', src: '', tone: undefined },
+  { subtitle: '', meta: '', aspect: 'square', src: '', tone: undefined, priority: false },
 )
+
+// A broken remote image must fall back to the editorial template instead of
+// showing the browser's broken-image icon. The container keeps its aspect ratio
+// throughout, so a failed image never shifts the layout.
+const failed = ref(false)
+watch(
+  () => props.src,
+  () => {
+    failed.value = false
+  },
+)
+function onError() {
+  failed.value = true
+}
+const showImage = computed(() => Boolean(props.src) && !failed.value)
 
 const palettes = [
   { bg: 'linear-gradient(155deg, #ead8d0 0%, #d9bab4 52%, #c08f93 100%)', ink: '#4b3638', line: 'rgba(75,54,56,.22)' },
@@ -49,11 +66,14 @@ const initial = computed(() => props.title.trim().slice(0, 1) || '曦')
     :style="{ background: palette.bg, color: palette.ink }"
   >
     <img
-      v-if="src"
+      v-if="showImage"
       :src="src"
       :alt="title"
       class="absolute inset-0 h-full w-full object-cover"
-      loading="lazy"
+      :loading="priority ? 'eager' : 'lazy'"
+      :fetchpriority="priority ? 'high' : 'auto'"
+      decoding="async"
+      @error="onError"
     />
     <template v-else>
       <div class="relative z-10 flex items-start justify-between gap-2">
