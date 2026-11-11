@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"xiweispace/backend/internal/collector"
 	"xiweispace/backend/internal/discovery"
 	"xiweispace/backend/internal/models"
 	"xiweispace/backend/internal/store"
@@ -242,6 +243,15 @@ func (s *Server) adminCreateSearchTask(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	entity, err := s.store.GetArtistEntity(r.Context())
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "internal", "读取人物实体配置失败")
+		return
+	}
+	if err := collector.ValidateSearchQuery(query, entity.Names()); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
 	domains, err := normalizeDomains(in.Domains)
 	if err != nil {
 		apiError(w, http.StatusBadRequest, "invalid_request", err.Error())
@@ -309,6 +319,15 @@ func (s *Server) adminUpdateSearchTask(w http.ResponseWriter, r *http.Request) {
 		maxResults = *in.MaxResults
 	}
 	if err := validateTaskFields(name, query, providerID, hint, sourceType, trust, interval, maxResults); err != nil {
+		apiError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	entity, err := s.store.GetArtistEntity(r.Context())
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "internal", "读取人物实体配置失败")
+		return
+	}
+	if err := collector.ValidateSearchQuery(query, entity.Names()); err != nil {
 		apiError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}

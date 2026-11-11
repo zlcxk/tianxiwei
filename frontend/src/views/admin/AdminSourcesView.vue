@@ -68,6 +68,14 @@ const form = reactive<SourceForm>({
 const enabledCount = computed(() => items.value.filter((s) => s.enabled).length)
 const errorCount = computed(() => items.value.filter((s) => s.enabled && s.last_error).length)
 
+// A source that still succeeds but has produced no valid content for a week is
+// effectively dead weight; surface it so editors can fix keywords or disable it.
+function isLowQuality(source: Source): boolean {
+  if (!source.enabled || source.recent_valid_count > 0 || !source.last_success_at) return false
+  return Date.now() - new Date(source.last_success_at).getTime() > 7 * 24 * 3600 * 1000
+}
+const lowQualityCount = computed(() => items.value.filter(isLowQuality).length)
+
 function configString(config: Record<string, unknown>, key: string): string {
   const value = config?.[key]
   return typeof value === 'string' ? value : ''
@@ -253,6 +261,7 @@ onMounted(load)
       <span>共 {{ items.length }} 个来源</span>
       <span class="text-moss">启用 {{ enabledCount }}</span>
       <span v-if="errorCount" class="text-accent">异常 {{ errorCount }}</span>
+      <span v-if="lowQualityCount" class="text-[#8a6a32]">近期无有效内容 {{ lowQualityCount }}</span>
       <span class="ml-auto text-[10px]">密钥字段在接口返回中脱敏，编辑时不会回传明文。</span>
     </div>
 
@@ -307,6 +316,16 @@ onMounted(load)
                 <AlertTriangle class="h-3 w-3" />最近失败 {{ relativeTime(source.last_failure_at) }}
               </span>
               <span v-if="!source.last_success_at && !source.last_failure_at" class="text-muted">尚未运行</span>
+              <span v-if="source.consecutive_failures > 0" class="inline-flex items-center gap-1 text-accent">
+                <AlertTriangle class="h-3 w-3" />连续失败 {{ source.consecutive_failures }} 次
+              </span>
+              <span class="text-muted">近 30 天有效内容 {{ source.recent_valid_count }} 条</span>
+            </div>
+            <div
+              v-if="isLowQuality(source)"
+              class="mt-2 border-l-2 border-[#b99a5e]/40 bg-[#f3ead7]/40 px-3 py-2 text-[10px] leading-5 text-[#8a6a32]"
+            >
+              最近 7 天没有新的有效内容，建议检查关键词或停用该来源。
             </div>
             <div v-if="source.last_error" class="mt-2 border-l-2 border-accent/40 bg-blush/20 px-3 py-2 text-[10px] leading-5 text-accent">
               {{ source.last_error }}

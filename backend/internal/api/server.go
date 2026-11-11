@@ -84,6 +84,8 @@ func (s *Server) Handler() http.Handler {
 			r.Patch("/contents/{id}", s.adminUpdateContent)
 			r.Get("/artist", s.adminGetArtist)
 			r.Put("/artist", s.adminUpdateArtist)
+			r.Get("/artist-entity", s.adminGetArtistEntity)
+			r.Put("/artist-entity", s.adminPutArtistEntity)
 			r.Get("/works", s.adminListWorks)
 			r.Post("/works", s.adminCreateWork)
 			r.Put("/works/{id}", s.adminUpdateWork)

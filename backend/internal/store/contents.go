@@ -24,6 +24,7 @@ const contentFields = `
 	c.origin_name, c.origin_platform, c.origin_type,
 	c.metadata_status, c.metadata_error, c.search_task_id,
 	c.trust_level, c.is_official, c.review_status, c.content_status, c.review_reason,
+	c.relevance_score, c.relevance_label, c.filter_reason,
 	COALESCE((
 		SELECT json_agg(json_build_object(
 			'id', sc.id, 'code', sc.code, 'name', sc.name, 'description', sc.description,
@@ -81,6 +82,7 @@ func scanContentRow(row rowScanner, withRaw bool) (models.Content, error) {
 		&c.OriginName, &c.OriginPlatform, &c.OriginType,
 		&c.MetadataStatus, &c.MetadataError, &c.SearchTaskID,
 		&c.TrustLevel, &c.IsOfficial, &c.ReviewStatus, &c.ContentStatus, &c.ReviewReason,
+		&c.RelevanceScore, &c.RelevanceLabel, &c.FilterReason,
 		&scenesJSON, &worksJSON, &charsJSON, &eventsJSON,
 	}
 	var raw []byte
@@ -132,6 +134,8 @@ type ContentFilter struct {
 	OnlyCandidates     bool
 	SearchTaskID       string
 	MetadataStatus     string
+	FilterReason       string
+	RelevanceLabel     string
 	Sort               string
 	Cursor             *ContentCursor
 	Limit              int
@@ -211,6 +215,12 @@ func (f ContentFilter) where() (string, []any) {
 	}
 	if f.MetadataStatus != "" {
 		add(`c.metadata_status = $%d`, f.MetadataStatus)
+	}
+	if f.FilterReason != "" {
+		add(`c.filter_reason = $%d`, f.FilterReason)
+	}
+	if f.RelevanceLabel != "" {
+		add(`c.relevance_label = $%d`, f.RelevanceLabel)
 	}
 	if f.Cursor != nil {
 		idx := len(args) + 1

@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -29,6 +30,29 @@ type Artist struct {
 	Cover       string         `json:"cover"`
 	Bio         string         `json:"bio"`
 	ProfileData map[string]any `json:"profile_data"`
+}
+
+// ArtistEntity is the verified person entity used by relevance scoring.
+// Aliases and verified accounts are editorial data and must not be inferred.
+type ArtistEntity struct {
+	Name             string   `json:"name"`
+	Aliases          []string `json:"aliases"`
+	VerifiedAccounts []string `json:"verified_accounts"`
+	ExcludedTerms    []string `json:"excluded_terms"`
+}
+
+// Names returns the verified name followed by the editorial aliases.
+func (e ArtistEntity) Names() []string {
+	out := make([]string, 0, len(e.Aliases)+1)
+	if name := strings.TrimSpace(e.Name); name != "" {
+		out = append(out, name)
+	}
+	for _, alias := range e.Aliases {
+		if alias = strings.TrimSpace(alias); alias != "" {
+			out = append(out, alias)
+		}
+	}
+	return out
 }
 
 type Scene struct {
@@ -113,6 +137,9 @@ type Content struct {
 	ReviewStatus       string          `json:"review_status"`
 	ContentStatus      string          `json:"content_status"`
 	ReviewReason       string          `json:"review_reason,omitempty"`
+	RelevanceScore     int             `json:"relevance_score"`
+	RelevanceLabel     string          `json:"relevance_label"`
+	FilterReason       string          `json:"filter_reason,omitempty"`
 	Scenes             []Scene         `json:"scenes"`
 	Works              []WorkRef       `json:"works"`
 	Characters         []CharacterRef  `json:"characters"`
@@ -221,19 +248,21 @@ type FavoriteItem struct {
 }
 
 type Source struct {
-	ID              string         `json:"id"`
-	Name            string         `json:"name"`
-	Platform        string         `json:"platform"`
-	SourceType      string         `json:"source_type"`
-	AdapterType     string         `json:"adapter_type"`
-	Config          map[string]any `json:"config"`
-	TrustLevel      string         `json:"trust_level"`
-	Enabled         bool           `json:"enabled"`
-	IntervalMinutes int            `json:"interval_minutes"`
-	LastSuccessAt   *time.Time     `json:"last_success_at"`
-	LastFailureAt   *time.Time     `json:"last_failure_at"`
-	LastError       string         `json:"last_error"`
-	CreatedAt       time.Time      `json:"created_at"`
+	ID                  string         `json:"id"`
+	Name                string         `json:"name"`
+	Platform            string         `json:"platform"`
+	SourceType          string         `json:"source_type"`
+	AdapterType         string         `json:"adapter_type"`
+	Config              map[string]any `json:"config"`
+	TrustLevel          string         `json:"trust_level"`
+	Enabled             bool           `json:"enabled"`
+	IntervalMinutes     int            `json:"interval_minutes"`
+	LastSuccessAt       *time.Time     `json:"last_success_at"`
+	LastFailureAt       *time.Time     `json:"last_failure_at"`
+	LastError           string         `json:"last_error"`
+	ConsecutiveFailures int            `json:"consecutive_failures"`
+	RecentValidCount    int            `json:"recent_valid_count"`
+	CreatedAt           time.Time      `json:"created_at"`
 }
 
 type Job struct {

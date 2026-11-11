@@ -170,6 +170,22 @@ export const reviewStatusLabels: Record<string, string> = {
   rejected: '已拒绝',
 }
 
+export const relevanceLabels: Record<string, string> = {
+  high: '高度相关',
+  candidate: '相关候选',
+  filtered: '已过滤',
+}
+
+export const filterReasonLabels: Record<string, string> = {
+  irrelevant_person: '与人物无关',
+  ambiguous_entity: '实体指向不明确',
+  dictionary_content: '姓氏/字典内容',
+  unrelated_person: '其他人物内容',
+  insufficient_context: '缺少人物上下文',
+  duplicate_content: '重复内容',
+  invalid_source: '来源无效',
+}
+
 export const jobStatusLabels: Record<string, string> = {
   queued: '排队中',
   running: '采集中',

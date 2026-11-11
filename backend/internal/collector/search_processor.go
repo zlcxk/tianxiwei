@@ -70,6 +70,12 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 		fail("加载分类规则失败: " + err.Error())
 		return
 	}
+	entityCtx, err := p.Store.LoadEntityContext(ctx)
+	if err != nil {
+		fail("加载人物实体配置失败: " + err.Error())
+		return
+	}
+	entity := EntityFromContext(entityCtx)
 
 	var since *time.Time
 	if task.LastSuccessAt != nil {
@@ -109,6 +115,7 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 	}
 
 	fetched, inserted, duplicates, failed, parsedOK, parseFailed := len(results), 0, 0, 0, 0, 0
+	filteredCount := 0
 	seen := map[string]bool{}
 	itemErrors := make([]string, 0, 3)
 	for _, result := range results {
@@ -192,6 +199,14 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 			contentType = InferContentType(pseudoSource, title+" "+summary)
 			contentType = searchContentType(contentType, originType)
 		}
+		relevance := Evaluate(entity, EvaluateInput{
+			Title:          title,
+			Summary:        summary,
+			Author:         author,
+			OriginName:     originName,
+			OriginPlatform: platform,
+			MetadataStatus: metaStatus,
+		})
 		classification := Classify(title+" "+summary, rules)
 		reason := "搜索发现候选：发布时间或摘要需人工核验原文"
 		if precision == "unknown" {
@@ -199,6 +214,18 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 		}
 		if metaStatus == "blocked" {
 			reason += "；目标页面限制自动读取"
+		}
+		// Filtered candidates are still inserted for auditability, but they are
+		// rejected immediately so they never enter the manual review queue.
+		reviewStatus, contentStatus := "pending", "pending"
+		if relevance.Filtered() {
+			reviewStatus, contentStatus = "rejected", "rejected"
+			reason = "自动过滤：" + relevance.Reason
+			if metaStatus == "blocked" {
+				reason += "；目标页面限制自动读取"
+			}
+		} else {
+			reason = relevance.Reason + "；" + reason
 		}
 		raw, _ := json.Marshal(map[string]any{
 			"discovery": map[string]any{
@@ -234,6 +261,7 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 			URL:                canonical,
 			CoverURL:           "",
 			URLHash:            urlHash,
+			ContentHash:        contentFingerprint(title, summary),
 			PublishedAt:        published,
 			PublishedPrecision: precision,
 			OriginName:         originName,
@@ -243,9 +271,12 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 			MetadataError:      metaError,
 			TrustLevel:         task.TrustLevel,
 			IsOfficial:         originType == "official" || task.TrustLevel == "official",
-			ReviewStatus:       "pending",
-			ContentStatus:      "pending",
+			ReviewStatus:       reviewStatus,
+			ContentStatus:      contentStatus,
 			ReviewReason:       reason,
+			RelevanceScore:     relevance.Score,
+			RelevanceLabel:     relevance.Label,
+			FilterReason:       relevance.FilterReason,
 			RawData:            raw,
 			SceneIDs:           classification.SceneIDs,
 		})
@@ -261,6 +292,9 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 			duplicates++
 		} else {
 			inserted++
+			if relevance.Filtered() {
+				filteredCount++
+			}
 		}
 	}
 
@@ -280,7 +314,8 @@ func (p *SearchProcessor) Run(parent context.Context, run models.SearchRun, task
 	}
 	log.Info("search finished", "status", status,
 		"fetched", fetched, "inserted", inserted, "duplicates", duplicates,
-		"failed", failed, "metadata_ok", parsedOK, "metadata_failed", parseFailed,
+		"failed", failed, "filtered", filteredCount,
+		"metadata_ok", parsedOK, "metadata_failed", parseFailed,
 		"success_count", inserted, "failure_count", failed, "duration", duration())
 }
 

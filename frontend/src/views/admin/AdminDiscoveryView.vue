@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -13,7 +13,7 @@ import {
   XCircle,
 } from 'lucide-vue-next'
 import { api } from '../../api/client'
-import type { SearchProvider, SearchRun, SearchTask, SearchTestResult } from '../../types'
+import type { ArtistEntity, SearchProvider, SearchRun, SearchTask, SearchTestResult } from '../../types'
 import {
   contentTypeLabels,
   formatDateTime,
@@ -28,6 +28,7 @@ import LoadingBlock from '../../components/LoadingBlock.vue'
 import Modal from '../../components/Modal.vue'
 
 const providers = ref<SearchProvider[]>([])
+const entityNames = ref<string[]>([])
 const tasks = ref<SearchTask[]>([])
 const runs = ref<SearchRun[]>([])
 const loading = ref(true)
@@ -40,6 +41,13 @@ const providerOpen = ref(false)
 const providerEditingId = ref('')
 const taskOpen = ref(false)
 const taskEditingId = ref('')
+
+const queryHasName = computed(() => {
+  const query = taskForm.query.trim().toLowerCase()
+  if (!query) return true
+  if (!entityNames.value.length) return true
+  return entityNames.value.some((name) => query.includes(name.toLowerCase()))
+})
 
 const typeOptions = Object.entries(contentTypeLabels)
 const sourceTypeOptions = Object.entries(sourceTypeLabels)
@@ -207,6 +215,10 @@ async function saveTask() {
     toast.error('任务名称、搜索服务与关键词不能为空')
     return
   }
+  if (!queryHasName.value) {
+    toast.error('关键词必须包含完整人物姓名或已验证别名，不能只用姓氏或泛称')
+    return
+  }
   const domains = taskForm.domains_text
     .split(/[\n,，]+/)
     .map((d) => d.trim())
@@ -305,6 +317,15 @@ async function load() {
   }
 }
 
+async function loadEntity() {
+  try {
+    const data = await api.get<ArtistEntity>('/admin/artist-entity')
+    entityNames.value = [data.name, ...(data.aliases || [])].map((n) => n.trim()).filter(Boolean)
+  } catch {
+    /* server-side validation still applies if this lookup fails */
+  }
+}
+
 function runTone(status: string): string {
   switch (status) {
     case 'success':
@@ -337,7 +358,10 @@ function runDuration(run: SearchRun): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadEntity()
+})
 </script>
 
 <template>
@@ -616,7 +640,10 @@ onMounted(load)
         </div>
         <div>
           <label for="task-query" class="field-label">关键词 *</label>
-          <input id="task-query" v-model="taskForm.query" class="field" placeholder="田曦薇" />
+          <input id="task-query" v-model="taskForm.query" class="field" placeholder="田曦薇 采访" />
+          <p class="mt-1 text-[10px] leading-5" :class="queryHasName ? 'text-muted' : 'text-accent'">
+            必须包含完整姓名或已验证别名。只用「田」「演员」等泛词会引入姓氏、字典和无关人物内容。
+          </p>
         </div>
         <div class="md:col-span-2">
           <label for="task-domains" class="field-label">限定站点（可选，每行一个）</label>

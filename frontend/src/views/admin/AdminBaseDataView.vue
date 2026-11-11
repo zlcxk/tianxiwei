@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { api } from '../../api/client'
-import type { Artist, Character, RecommendWeights, Rule, Scene, Work } from '../../types'
+import type { Artist, ArtistEntity, Character, RecommendWeights, Rule, Scene, Work } from '../../types'
 import { formatDate, workStatusLabels, workTypeLabels } from '../../lib/format'
 import { toast } from '../../stores/toast'
 import AdminPageHeader from './AdminPageHeader.vue'
@@ -19,7 +19,7 @@ import LoadingBlock from '../../components/LoadingBlock.vue'
 import Modal from '../../components/Modal.vue'
 import SceneIcon from '../../components/SceneIcon.vue'
 
-type TabKey = 'artist' | 'works' | 'characters' | 'scenes' | 'rules' | 'weights'
+type TabKey = 'artist' | 'entity' | 'works' | 'characters' | 'scenes' | 'rules' | 'weights'
 
 const tab = ref<TabKey>('artist')
 const loading = ref(true)
@@ -28,6 +28,7 @@ const saving = ref('')
 const deleting = ref('')
 
 const artist = ref<Artist | null>(null)
+const entity = ref<ArtistEntity | null>(null)
 const works = ref<Work[]>([])
 const characters = ref<Character[]>([])
 const scenes = ref<Scene[]>([])
@@ -47,6 +48,13 @@ const artistForm = reactive({
   profession: '',
   debut: '',
   source_url: '',
+})
+
+const entityForm = reactive({
+  name: '',
+  aliases: '',
+  verified_accounts: '',
+  excluded_terms: '',
 })
 
 const workModal = ref(false)
@@ -85,6 +93,7 @@ const weightForm = reactive({ scene: 40, recency: 30, trust: 20, popularity: 10 
 
 const tabs: { key: TabKey; label: string; count?: number }[] = [
   { key: 'artist', label: '艺人' },
+  { key: 'entity', label: '人物实体' },
   { key: 'works', label: '作品', count: works.value.length },
   { key: 'characters', label: '角色', count: characters.value.length },
   { key: 'scenes', label: '场景', count: scenes.value.length },
@@ -121,6 +130,23 @@ function applyArtist(data: Artist) {
   })
 }
 
+function splitList(value: string): string[] {
+  return value
+    .split(/[,，、;\n；]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function applyEntity(data: ArtistEntity) {
+  entity.value = data
+  Object.assign(entityForm, {
+    name: data.name || '',
+    aliases: (data.aliases || []).join('，'),
+    verified_accounts: (data.verified_accounts || []).join('，'),
+    excluded_terms: (data.excluded_terms || []).join('，'),
+  })
+}
+
 function applyScenes(list: Scene[]) {
   scenes.value = list
   const drafts: Record<string, { name: string; description: string; enabled: boolean }> = {}
@@ -139,8 +165,9 @@ async function loadAll() {
   loading.value = true
   error.value = ''
   try {
-    const [artistRes, workRes, charRes, sceneRes, ruleRes, weightRes] = await Promise.all([
+    const [artistRes, entityRes, workRes, charRes, sceneRes, ruleRes, weightRes] = await Promise.all([
       api.get<Artist>('/admin/artist'),
+      api.get<ArtistEntity>('/admin/artist-entity'),
       api.get<{ items: Work[] }>('/admin/works'),
       api.get<{ items: Character[] }>('/admin/characters'),
       api.get<{ items: Scene[] }>('/admin/scenes'),
@@ -148,6 +175,7 @@ async function loadAll() {
       api.get<RecommendWeights>('/admin/settings/recommend'),
     ])
     applyArtist(artistRes)
+    applyEntity(entityRes)
     works.value = workRes.items
     characters.value = charRes.items
     applyScenes(sceneRes.items)
@@ -211,6 +239,29 @@ async function saveArtist() {
     })
     applyArtist(updated)
     toast.success('艺人资料已保存')
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : '保存失败')
+  } finally {
+    saving.value = ''
+  }
+}
+
+async function saveEntity() {
+  if (saving.value) return
+  if (!entityForm.name.trim()) {
+    toast.error('人物姓名不能为空')
+    return
+  }
+  saving.value = 'entity'
+  try {
+    const updated = await api.put<ArtistEntity>('/admin/artist-entity', {
+      name: entityForm.name.trim(),
+      aliases: splitList(entityForm.aliases),
+      verified_accounts: splitList(entityForm.verified_accounts),
+      excluded_terms: splitList(entityForm.excluded_terms),
+    })
+    applyEntity(updated)
+    toast.success('人物实体已保存，新的搜索任务将按此配置评分')
   } catch (err) {
     toast.error(err instanceof Error ? err.message : '保存失败')
   } finally {
@@ -583,6 +634,69 @@ onMounted(loadAll)
             <button class="btn-primary !min-h-9 text-xs" :disabled="saving === 'artist'" @click="saveArtist">
               <Save class="h-3 w-3" />
               {{ saving === 'artist' ? '保存中' : '保存艺人资料' }}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Person entity -->
+      <section v-if="tab === 'entity'" class="grid gap-6 lg:grid-cols-[.8fr_1.2fr]">
+        <div class="h-fit border border-line bg-canvas p-5">
+          <div class="eyebrow">Entity Relevance</div>
+          <h2 class="mt-1 font-display text-xl">人物相关性评分</h2>
+          <p class="mt-3 text-[11px] leading-6 text-muted">
+            采集结果入库前按下面规则打分。别名与认证账号必须人工核验后填写，系统不会自动推断。
+          </p>
+          <div class="mt-4 space-y-1.5 text-[10px]">
+            <div class="flex justify-between border-b border-line py-1.5"><span class="text-muted">标题包含完整姓名 / 别名</span><span>+40</span></div>
+            <div class="flex justify-between border-b border-line py-1.5"><span class="text-muted">摘要包含完整姓名 / 别名</span><span>+25</span></div>
+            <div class="flex justify-between border-b border-line py-1.5"><span class="text-muted">来源为已验证账号</span><span>+25</span></div>
+            <div class="flex justify-between py-1.5"><span class="text-muted">提及关联作品 / 角色 / 事件</span><span>+15 / 项</span></div>
+          </div>
+          <div class="mt-4 space-y-1.5 text-[10px] leading-5 text-muted">
+            <p>≥ 70 分：高度相关，进入候选池；40–69 分：相关候选；低于 40 分：自动过滤并记录原因。</p>
+            <p>单字姓氏、姓氏/字典百科、缺少人物上下文的页面会被硬性排除，不进入待审核队列。</p>
+          </div>
+        </div>
+
+        <div class="border border-line bg-canvas">
+          <div class="border-b border-line px-5 py-4">
+            <div class="eyebrow">Verified Entity</div>
+            <h2 class="mt-1 font-display text-xl">人物实体配置</h2>
+          </div>
+          <div class="grid gap-5 p-5 md:p-6">
+            <div>
+              <label for="entity-name" class="field-label">完整姓名 *</label>
+              <input id="entity-name" v-model="entityForm.name" class="field" placeholder="例如：田曦薇" />
+              <p class="mt-1 text-[10px] text-muted">搜索任务必须包含完整姓名或已验证别名，单独使用姓氏会被拒绝。</p>
+            </div>
+            <div>
+              <label for="entity-aliases" class="field-label">已验证别名（逗号分隔）</label>
+              <input id="entity-aliases" v-model="entityForm.aliases" class="field" placeholder="留空表示没有已核验别名" />
+            </div>
+            <div>
+              <label for="entity-accounts" class="field-label">已验证账号（逗号分隔）</label>
+              <input id="entity-accounts" v-model="entityForm.verified_accounts" class="field" placeholder="例如：田曦薇工作室" />
+              <p class="mt-1 text-[10px] text-muted">仅填写已人工核验的官方或本人账号，命中后加 25 分。</p>
+            </div>
+            <div>
+              <label for="entity-excluded" class="field-label">排除词（逗号或换行分隔）</label>
+              <textarea
+                id="entity-excluded"
+                v-model="entityForm.excluded_terms"
+                rows="4"
+                class="field resize-y"
+                placeholder="田姓氏，田字解释，汉字田，田字组词"
+              />
+              <p class="mt-1 text-[10px] leading-5 text-muted">
+                命中排除词的页面会标记为「姓氏/字典内容」并自动过滤。仅在完整姓名未出现时生效。
+              </p>
+            </div>
+          </div>
+          <div class="flex justify-end border-t border-line px-5 py-4">
+            <button class="btn-primary !min-h-9 text-xs" :disabled="saving === 'entity'" @click="saveEntity">
+              <Save class="h-3 w-3" />
+              {{ saving === 'entity' ? '保存中' : '保存人物实体' }}
             </button>
           </div>
         </div>

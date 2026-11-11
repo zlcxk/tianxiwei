@@ -121,6 +121,9 @@ export interface Content {
   review_status: string
   content_status: string
   review_reason?: string
+  relevance_score: number
+  relevance_label: 'high' | 'candidate' | 'filtered' | ''
+  filter_reason?: string
   scenes: Scene[]
   works: WorkRef[]
   characters: CharacterRef[]
@@ -180,7 +183,16 @@ export interface Source {
   last_success_at: string | null
   last_failure_at: string | null
   last_error: string
+  consecutive_failures: number
+  recent_valid_count: number
   created_at: string
+}
+
+export interface ArtistEntity {
+  name: string
+  aliases: string[]
+  verified_accounts: string[]
+  excluded_terms: string[]
 }
 
 export interface Job {

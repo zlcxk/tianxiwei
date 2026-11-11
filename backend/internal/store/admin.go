@@ -15,14 +15,28 @@ import (
 
 const sourceColumns = `s.id, s.name, s.platform, s.source_type, s.adapter_type, s.config,
 	s.trust_level, s.enabled, s.interval_minutes, s.last_success_at, s.last_failure_at,
-	s.last_error, s.created_at`
+	s.last_error,
+	COALESCE((
+		SELECT count(*) FROM collection_jobs j
+		WHERE j.source_id=s.id AND j.status='failed'
+		  AND j.created_at > COALESCE((
+			SELECT max(j2.created_at) FROM collection_jobs j2
+			WHERE j2.source_id=s.id AND j2.status='success'
+		  ), 'epoch'::timestamptz)
+	), 0),
+	COALESCE((
+		SELECT count(*) FROM contents c
+		WHERE c.source_id=s.id AND c.content_status='published'
+		  AND COALESCE(c.published_at, c.discovered_at) > now() - interval '30 days'
+	), 0),
+	s.created_at`
 
 func scanSource(row rowScanner) (models.Source, error) {
 	var src models.Source
 	var cfg []byte
 	err := row.Scan(&src.ID, &src.Name, &src.Platform, &src.SourceType, &src.AdapterType, &cfg,
 		&src.TrustLevel, &src.Enabled, &src.IntervalMinutes, &src.LastSuccessAt, &src.LastFailureAt,
-		&src.LastError, &src.CreatedAt)
+		&src.LastError, &src.ConsecutiveFailures, &src.RecentValidCount, &src.CreatedAt)
 	if err != nil {
 		return src, mapNoRows(err)
 	}

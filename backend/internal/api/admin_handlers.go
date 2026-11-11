@@ -238,6 +238,8 @@ func (s *Server) adminListContents(w http.ResponseWriter, r *http.Request) {
 		OnlyCandidates:     q.Get("candidate") == "1" || q.Get("candidate") == "true",
 		SearchTaskID:       strings.TrimSpace(q.Get("search_task_id")),
 		MetadataStatus:     strings.TrimSpace(q.Get("metadata_status")),
+		FilterReason:       strings.TrimSpace(q.Get("filter_reason")),
+		RelevanceLabel:     strings.TrimSpace(q.Get("relevance_label")),
 		EventID:            strings.TrimSpace(q.Get("event_id")),
 		Sort:               "latest",
 		Limit:              pageSize,
@@ -389,6 +391,30 @@ func (s *Server) adminUpdateArtist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
+}
+
+// adminGetArtistEntity returns the editorial person entity used for relevance
+// scoring. Aliases and verified accounts are never inferred automatically.
+func (s *Server) adminGetArtistEntity(w http.ResponseWriter, r *http.Request) {
+	entity, err := s.store.GetArtistEntity(r.Context())
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "internal", "读取人物实体配置失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, entity)
+}
+
+func (s *Server) adminPutArtistEntity(w http.ResponseWriter, r *http.Request) {
+	var in models.ArtistEntity
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	entity, err := s.store.PutArtistEntity(r.Context(), in)
+	if err != nil {
+		apiError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, entity)
 }
 
 func (s *Server) adminListWorks(w http.ResponseWriter, r *http.Request) {

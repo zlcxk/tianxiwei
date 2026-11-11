@@ -483,6 +483,7 @@ type DiscoveredContent struct {
 	URL                string
 	CoverURL           string
 	URLHash            string
+	ContentHash        string
 	PublishedAt        *time.Time
 	PublishedPrecision string
 	OriginName         string
@@ -495,20 +496,40 @@ type DiscoveredContent struct {
 	ReviewStatus       string
 	ContentStatus      string
 	ReviewReason       string
+	RelevanceScore     int
+	RelevanceLabel     string
+	FilterReason       string
 	RawData            []byte
 	SceneIDs           []string
 }
 
 // InsertDiscovered inserts a search candidate. Unlike RSS collection it keeps
-// published_at NULL when the publication time is unknown, records the separate
-// discovery time, and deduplicates only by canonical URL so that independent
-// reports about the same event remain separate timeline entries.
+// published_at NULL when the publication time is unknown and records the
+// separate discovery time. Dedupe is by canonical URL plus a 14-day
+// title/summary fingerprint, so independent reports about the same event
+// remain separate timeline entries while syndicated copies do not.
 func (s *Store) InsertDiscovered(ctx context.Context, c DiscoveredContent) (string, error) {
 	status := ""
 	err := s.withTx(ctx, func(tx pgx.Tx) error {
 		var existing string
 		if c.URLHash != "" {
 			err := tx.QueryRow(ctx, `SELECT id FROM contents WHERE url_hash=$1 LIMIT 1`, c.URLHash).Scan(&existing)
+			if err == nil {
+				status = Duplicate
+				return nil
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+		}
+		// Cross-provider dedupe: the same article can be returned by several
+		// search providers with different URLs. A 14-day fingerprint window
+		// keeps syndicated copies out without merging independent reports.
+		if c.ContentHash != "" {
+			err := tx.QueryRow(ctx, `
+				SELECT id FROM contents
+				WHERE content_hash=$1 AND discovered_at > now() - interval '14 days'
+				LIMIT 1`, c.ContentHash).Scan(&existing)
 			if err == nil {
 				status = Duplicate
 				return nil
@@ -529,16 +550,19 @@ func (s *Store) InsertDiscovered(ctx context.Context, c DiscoveredContent) (stri
 				artist_id, source_id, search_task_id, title, summary, content_type, source_author,
 				source_url, cover_url, published_at, discovered_at, published_precision, collected_at,
 				origin_name, origin_platform, origin_type, metadata_status, metadata_error,
-				trust_level, is_official, review_status, content_status, review_reason, url_hash, raw_data
+				trust_level, is_official, review_status, content_status, review_reason,
+				url_hash, content_hash, relevance_score, relevance_label, filter_reason, raw_data
 			)
 			SELECT a.id, NULL, $1::uuid, $2, $3, $4, $5, $6, $7, $8, now(), $9, now(),
-			       $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NULLIF($20,''), $21::jsonb
+			       $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
+			       NULLIF($20,''), NULLIF($21,''), $22, $23, $24, $25::jsonb
 			FROM artists a ORDER BY a.created_at LIMIT 1
 			RETURNING id`,
 			c.SearchTaskID, c.Title, c.Summary, c.ContentType, c.Author, c.URL, c.CoverURL,
 			c.PublishedAt, c.PublishedPrecision, c.OriginName, c.OriginPlatform, c.OriginType,
 			c.MetadataStatus, c.MetadataError, c.TrustLevel, c.IsOfficial, c.ReviewStatus,
-			c.ContentStatus, c.ReviewReason, c.URLHash, c.RawData,
+			c.ContentStatus, c.ReviewReason, c.URLHash, c.ContentHash,
+			c.RelevanceScore, c.RelevanceLabel, c.FilterReason, c.RawData,
 		).Scan(&id); err != nil {
 			if strings.Contains(err.Error(), "contents_url_hash_uidx") {
 				status = Duplicate

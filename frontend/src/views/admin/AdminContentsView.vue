@@ -16,9 +16,11 @@ import type { Character, Content, Event, Paged, Scene, Source, Work } from '../.
 import {
   contentStatusLabels,
   contentTypeLabels,
+  filterReasonLabels,
   formatDate,
   formatDateTime,
   precisionLabels,
+  relevanceLabels,
   reviewStatusLabels,
   sourceTypeLabels,
   trustLabels,
@@ -45,6 +47,8 @@ const reviewStatus = ref('')
 const contentType = ref('')
 const candidateOnly = ref(false)
 const metadataStatus = ref('')
+const relevanceLabel = ref('')
+const filterReason = ref('')
 const editRaw = ref<unknown>(null)
 
 const sources = ref<Source[]>([])
@@ -64,6 +68,8 @@ const metadataOptions = [
   { value: 'failed', label: '解析失败' },
   { value: 'blocked', label: '被来源拦截' },
 ]
+const relevanceOptions = Object.entries(relevanceLabels)
+const filterReasonOptions = Object.entries(filterReasonLabels)
 const contentStatusKeys = ['pending', 'reviewing', 'published', 'rejected', 'expired', 'archived']
 const reviewStatusKeys = ['none', 'pending', 'approved', 'rejected']
 
@@ -194,6 +200,8 @@ function buildParams(nextPage: number): string {
   if (contentType.value) params.set('content_type', contentType.value)
   if (candidateOnly.value) params.set('candidate', 'true')
   if (metadataStatus.value) params.set('metadata_status', metadataStatus.value)
+  if (relevanceLabel.value) params.set('relevance_label', relevanceLabel.value)
+  if (filterReason.value) params.set('filter_reason', filterReason.value)
   return params.toString()
 }
 
@@ -223,6 +231,8 @@ function resetFilters() {
   contentType.value = ''
   candidateOnly.value = false
   metadataStatus.value = ''
+  relevanceLabel.value = ''
+  filterReason.value = ''
   applyFilters()
 }
 
@@ -307,6 +317,19 @@ function statusTone(status: string): string {
   }
 }
 
+function relevanceTone(label: string): string {
+  switch (label) {
+    case 'high':
+      return 'border-moss/30 bg-moss/10 text-moss'
+    case 'candidate':
+      return 'border-[#b99a5e]/30 bg-[#f3ead7] text-[#8a6a32]'
+    case 'filtered':
+      return 'border-accent/30 bg-blush/40 text-accent'
+    default:
+      return 'border-line bg-white text-muted'
+  }
+}
+
 let keywordTimer: ReturnType<typeof setTimeout> | undefined
 watch(keyword, () => {
   clearTimeout(keywordTimer)
@@ -355,7 +378,7 @@ onMounted(async () => {
 
     <!-- Filters -->
     <div class="mb-5 border border-line bg-canvas p-3 md:p-4">
-      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_auto_auto_auto_auto]">
+      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(180px,1fr)_repeat(6,auto)]">
         <div class="relative">
           <Search class="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
           <input v-model="keyword" class="field !py-2.5 pl-9 text-xs" placeholder="搜索标题、摘要或来源" />
@@ -376,6 +399,14 @@ onMounted(async () => {
           <option value="">全部解析状态</option>
           <option v-for="option in metadataOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
         </select>
+        <select v-model="relevanceLabel" class="select-field !py-2.5 text-xs" @change="applyFilters">
+          <option value="">全部相关度</option>
+          <option v-for="[key, label] in relevanceOptions" :key="key" :value="key">{{ label }}</option>
+        </select>
+        <select v-model="filterReason" class="select-field !py-2.5 text-xs" @change="applyFilters">
+          <option value="">全部过滤原因</option>
+          <option v-for="[key, label] in filterReasonOptions" :key="key" :value="key">{{ label }}</option>
+        </select>
       </div>
       <div class="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted">
         <div class="flex items-center gap-3">
@@ -386,7 +417,7 @@ onMounted(async () => {
           </label>
         </div>
         <button
-          v-if="keyword || contentStatus || reviewStatus || contentType || candidateOnly || metadataStatus"
+          v-if="keyword || contentStatus || reviewStatus || contentType || candidateOnly || metadataStatus || relevanceLabel || filterReason"
           class="inline-flex items-center gap-1 hover:text-ink"
           @click="resetFilters"
         >
@@ -432,6 +463,16 @@ onMounted(async () => {
                 搜索候选
               </span>
               <span
+                v-if="item.relevance_label"
+                class="border px-1 py-0.5 text-[8px]"
+                :class="relevanceTone(item.relevance_label)"
+              >
+                {{ relevanceLabels[item.relevance_label] }} · {{ item.relevance_score }}
+              </span>
+              <span v-if="item.filter_reason" class="text-[8px] text-[#9a6c72]">
+                {{ filterReasonLabels[item.filter_reason] || item.filter_reason }}
+              </span>
+              <span
                 v-if="item.metadata_status !== 'not_attempted'"
                 class="text-[8px]"
                 :class="item.metadata_status === 'ok' ? 'text-moss' : 'text-[#9a6c72]'"
@@ -447,6 +488,9 @@ onMounted(async () => {
               <span v-if="item.events?.length" class="text-[9px] text-[#9a6c72]">· {{ item.events.map((e) => e.title).join(' / ') }}</span>
             </div>
             <p v-if="item.metadata_error" class="mt-1 line-clamp-1 text-[9px] text-[#9a6c72]">{{ item.metadata_error }}</p>
+            <p v-if="item.filter_reason && item.review_reason" class="mt-1 line-clamp-1 text-[9px] text-[#9a6c72]">
+              {{ item.review_reason }}
+            </p>
           </div>
 
           <div class="flex flex-wrap items-center gap-1.5">
