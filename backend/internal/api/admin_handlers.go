@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -27,6 +28,32 @@ func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, o)
+}
+
+func (s *Server) adminDataHealth(w http.ResponseWriter, r *http.Request) {
+	filter := strings.TrimSpace(r.URL.Query().Get("filter"))
+	if filter == "" {
+		filter = "all"
+	}
+	if filter != "all" && !isOneOf(filter, "image", "summary", "date", "relation", "source_url") {
+		apiError(w, http.StatusBadRequest, "invalid_request", "筛选条件不正确")
+		return
+	}
+	limit := 100
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			apiError(w, http.StatusBadRequest, "invalid_request", "数量不正确")
+			return
+		}
+		limit = n
+	}
+	health, err := s.store.DataHealth(r.Context(), filter, limit)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "internal", "读取资料完善度失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, health)
 }
 
 func (s *Server) adminListSources(w http.ResponseWriter, r *http.Request) {

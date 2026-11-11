@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   ArrowUpRight,
   ChevronLeft,
@@ -32,6 +33,7 @@ import ImagePicker from '../../components/ImagePicker.vue'
 import LoadingBlock from '../../components/LoadingBlock.vue'
 import Modal from '../../components/Modal.vue'
 
+const route = useRoute()
 const items = ref<Content[]>([])
 const total = ref(0)
 const page = ref(1)
@@ -155,9 +157,9 @@ function openCreate() {
   modalOpen.value = true
 }
 
-async function openEdit(item: Content) {
+async function openEdit(item: Content, hydrate = true) {
   editingId.value = item.id
-  editRaw.value = null
+  editRaw.value = item.raw_data ?? null
   Object.assign(form, emptyForm(), {
     title: item.title,
     summary: item.summary,
@@ -177,6 +179,7 @@ async function openEdit(item: Content) {
     review_status: item.review_status,
   })
   modalOpen.value = true
+  if (!hydrate) return
   try {
     const full = await api.get<Content>(`/admin/contents/${item.id}`)
     form.scene_ids = full.scenes?.map((s) => s.id) || []
@@ -188,6 +191,17 @@ async function openEdit(item: Content) {
     editRaw.value = full.raw_data ?? null
   } catch {
     /* keep the list-provided relations */
+  }
+}
+
+// Direct links from the data-health panel may point at a content item outside
+// the current filter or page, so load it by id instead of searching the list.
+async function openEditById(id: string) {
+  try {
+    const full = await api.get<Content>(`/admin/contents/${id}`)
+    await openEdit(full, false)
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : '内容加载失败')
   }
 }
 
@@ -338,7 +352,7 @@ watch(keyword, () => {
 })
 
 onMounted(async () => {
-  load()
+  await load()
   try {
     const [sourceRes, sceneRes, workRes, charRes, eventRes] = await Promise.all([
       api.get<{ items: Source[] }>('/admin/sources'),
@@ -355,6 +369,8 @@ onMounted(async () => {
   } catch {
     /* metadata is only needed when opening the form */
   }
+  const edit = typeof route.query.edit === 'string' ? route.query.edit : ''
+  if (edit) await openEditById(edit)
 })
 </script>
 

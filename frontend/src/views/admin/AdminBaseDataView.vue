@@ -1,32 +1,61 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
+  ArrowUpRight,
   Check,
   Pencil,
   Plus,
   RefreshCw,
   Save,
   Trash2,
-  X,
 } from 'lucide-vue-next'
 import { api } from '../../api/client'
-import type { Artist, ArtistEntity, Character, RecommendWeights, Rule, Scene, Work } from '../../types'
+import type {
+  Artist,
+  ArtistEntity,
+  Character,
+  DataHealth,
+  DataHealthFilter,
+  DataHealthItem,
+  RecommendWeights,
+  Rule,
+  Scene,
+  Work,
+} from '../../types'
 import { formatDate, workStatusLabels, workTypeLabels } from '../../lib/format'
 import { toast } from '../../stores/toast'
 import AdminPageHeader from './AdminPageHeader.vue'
+import CoverArt from '../../components/CoverArt.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ImagePicker from '../../components/ImagePicker.vue'
 import LoadingBlock from '../../components/LoadingBlock.vue'
 import Modal from '../../components/Modal.vue'
 import SceneIcon from '../../components/SceneIcon.vue'
 
-type TabKey = 'artist' | 'entity' | 'works' | 'characters' | 'scenes' | 'rules' | 'weights'
+type TabKey = 'artist' | 'entity' | 'works' | 'characters' | 'scenes' | 'rules' | 'weights' | 'health'
+
+const route = useRoute()
+const router = useRouter()
 
 const tab = ref<TabKey>('artist')
 const loading = ref(true)
 const error = ref('')
 const saving = ref('')
 const deleting = ref('')
+
+const health = ref<DataHealth | null>(null)
+const healthLoading = ref(false)
+const healthError = ref('')
+const healthFilter = ref<DataHealthFilter>('all')
+const healthFilters: { key: DataHealthFilter; label: string }[] = [
+  { key: 'all', label: '全部缺失' },
+  { key: 'image', label: '缺图片' },
+  { key: 'summary', label: '缺摘要' },
+  { key: 'date', label: '缺时间' },
+  { key: 'relation', label: '缺关联' },
+  { key: 'source_url', label: '缺来源' },
+]
 
 const artist = ref<Artist | null>(null)
 const entity = ref<ArtistEntity | null>(null)
@@ -92,7 +121,7 @@ const ruleForm = reactive({
 const sceneDrafts = ref<Record<string, { name: string; description: string; enabled: boolean }>>({})
 const weightForm = reactive({ scene: 40, recency: 30, trust: 20, popularity: 10 })
 
-const tabs: { key: TabKey; label: string; count?: number }[] = [
+const tabs = computed<{ key: TabKey; label: string; count?: number }[]>(() => [
   { key: 'artist', label: '艺人' },
   { key: 'entity', label: '人物实体' },
   { key: 'works', label: '作品', count: works.value.length },
@@ -100,7 +129,8 @@ const tabs: { key: TabKey; label: string; count?: number }[] = [
   { key: 'scenes', label: '场景', count: scenes.value.length },
   { key: 'rules', label: '分类规则', count: rules.value.length },
   { key: 'weights', label: '推荐权重' },
-]
+  { key: 'health', label: '资料完善' },
+])
 
 const workTitleMap = computed(() => Object.fromEntries(works.value.map((w) => [w.id, w.title])))
 const weightTotal = computed(() => weightForm.scene + weightForm.recency + weightForm.trust + weightForm.popularity)
@@ -530,7 +560,98 @@ async function saveWeights() {
   }
 }
 
-onMounted(loadAll)
+const coverageRows = computed(() => {
+  const coverage = health.value?.coverage
+  if (!coverage) return []
+  return [
+    { label: '艺人头像', value: coverage.artist_avatar },
+    { label: '艺人封面', value: coverage.artist_cover },
+    { label: '作品海报', value: coverage.work_cover },
+    { label: '角色头像', value: coverage.character_avatar },
+    { label: '内容封面', value: coverage.content_cover },
+    { label: '事件封面', value: coverage.event_cover },
+  ]
+})
+
+const healthCountCards = computed(() => {
+  const counts = health.value?.counts
+  if (!counts) return []
+  return [
+    { label: '艺人头像', missing: counts.missing_artist_avatar, total: counts.artists },
+    { label: '艺人封面', missing: counts.missing_artist_cover, total: counts.artists },
+    { label: '作品海报', missing: counts.missing_work_cover, total: counts.works },
+    { label: '角色头像', missing: counts.missing_character_avatar, total: counts.characters },
+    { label: '内容封面', missing: counts.missing_content_cover, total: counts.published_contents },
+    { label: '事件封面', missing: counts.missing_event_cover, total: counts.published_events },
+    { label: '缺摘要', missing: counts.missing_summaries },
+    { label: '缺时间', missing: counts.missing_dates },
+    { label: '缺关联', missing: counts.missing_relations },
+    { label: '缺来源链接', missing: counts.missing_source_urls },
+  ]
+})
+
+let healthRequest = 0
+async function loadHealth(filter: DataHealthFilter = healthFilter.value) {
+  const seq = ++healthRequest
+  healthFilter.value = filter
+  healthLoading.value = true
+  healthError.value = ''
+  try {
+    const data = await api.get<DataHealth>(`/admin/data-health?filter=${filter}&limit=100`)
+    if (seq !== healthRequest) return
+    health.value = data
+  } catch (err) {
+    if (seq !== healthRequest) return
+    healthError.value = err instanceof Error ? err.message : '资料完善度加载失败'
+  } finally {
+    if (seq === healthRequest) healthLoading.value = false
+  }
+}
+
+function selectTab(key: TabKey) {
+  tab.value = key
+  if (key === 'health') void loadHealth()
+}
+
+function openHealthItem(item: DataHealthItem) {
+  if (item.type === 'artist') {
+    tab.value = 'artist'
+    return
+  }
+  if (item.type === 'work') {
+    const work = works.value.find((w) => w.id === item.id)
+    tab.value = 'works'
+    if (work) openWorkEdit(work)
+    else toast.error('作品不存在，可能已被删除')
+    return
+  }
+  if (item.type === 'character') {
+    const character = characters.value.find((c) => c.id === item.id)
+    tab.value = 'characters'
+    if (character) openCharacterEdit(character)
+    else toast.error('角色不存在，可能已被删除')
+    return
+  }
+  void router.push(item.edit_path)
+}
+
+onMounted(async () => {
+  await loadAll()
+  const queryTab = typeof route.query.tab === 'string' ? route.query.tab : ''
+  if (queryTab && tabs.value.some((item) => item.key === queryTab)) {
+    tab.value = queryTab as TabKey
+  }
+  const edit = typeof route.query.edit === 'string' ? route.query.edit : ''
+  if (tab.value === 'works' && edit) {
+    const work = works.value.find((item) => item.id === edit)
+    if (work) openWorkEdit(work)
+  }
+  if (tab.value === 'characters' && edit) {
+    const character = characters.value.find((item) => item.id === edit)
+    if (character) openCharacterEdit(character)
+  }
+  if (tab.value === 'health') await loadHealth()
+})
 </script>
 
 <template>
@@ -554,7 +675,7 @@ onMounted(loadAll)
         :key="item.key"
         class="relative shrink-0 px-4 py-2.5 text-[11px] transition"
         :class="tab === item.key ? 'text-ink' : 'text-muted hover:text-ink'"
-        @click="tab = item.key"
+        @click="selectTab(item.key)"
       >
         {{ item.label }}
         <span v-if="item.count !== undefined" class="ml-1 text-[9px] opacity-50">{{ item.count }}</span>
@@ -920,6 +1041,114 @@ onMounted(loadAll)
           <p class="mt-4 text-[10px] leading-5 text-muted">
             官方来源可信度最高；社区来源较低，重要信息进入人工审核。
           </p>
+        </div>
+      </section>
+
+      <!-- Data health -->
+      <section v-if="tab === 'health'" class="space-y-6">
+        <div class="border border-line bg-canvas">
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
+            <div>
+              <div class="eyebrow">Data Health</div>
+              <h2 class="mt-1 font-display text-xl">资料完善</h2>
+              <p class="mt-1 text-[10px] leading-5 text-muted">
+                统计艺人、作品、角色、已发布内容与事件的缺失字段。计数与下方清单使用同一份数据，点击条目可直接进入对应编辑入口。
+              </p>
+            </div>
+            <button class="btn-ghost !min-h-8 !px-3 text-[11px]" :disabled="healthLoading" @click="loadHealth()">
+              <RefreshCw class="h-3 w-3" :class="healthLoading ? 'animate-spin' : ''" />
+              刷新统计
+            </button>
+          </div>
+
+          <div v-if="healthCountCards.length" class="grid grid-cols-2 gap-px bg-line sm:grid-cols-3 lg:grid-cols-5">
+            <div v-for="card in healthCountCards" :key="card.label" class="bg-canvas px-4 py-3">
+              <div class="text-[9px] uppercase tracking-widest text-muted">{{ card.label }}</div>
+              <div class="mt-1 font-display text-xl" :class="card.missing ? 'text-accent' : 'text-moss'">{{ card.missing }}</div>
+              <div v-if="card.total !== undefined" class="text-[9px] text-muted">共 {{ card.total }}</div>
+            </div>
+          </div>
+
+          <div v-if="coverageRows.length" class="border-t border-line px-5 py-4">
+            <div class="mb-3 text-[10px] uppercase tracking-widest text-muted">图片覆盖率</div>
+            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div v-for="row in coverageRows" :key="row.label">
+                <div class="flex items-center justify-between text-[10px]">
+                  <span class="text-muted">{{ row.label }}</span>
+                  <span>{{ row.value }}%</span>
+                </div>
+                <div class="mt-1 h-1 w-full bg-line">
+                  <div class="h-full bg-accent" :style="{ width: row.value + '%' }" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="border border-line bg-canvas">
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
+            <div>
+              <div class="eyebrow">Missing Fields</div>
+              <h2 class="mt-1 font-display text-xl">待完善清单</h2>
+            </div>
+            <div class="flex flex-wrap gap-1">
+              <button
+                v-for="filter in healthFilters"
+                :key="filter.key"
+                class="tag !py-1 transition"
+                :class="healthFilter === filter.key ? '!border-accent !text-accent' : 'text-muted hover:text-ink'"
+                @click="loadHealth(filter.key)"
+              >
+                {{ filter.label }}
+              </button>
+            </div>
+          </div>
+          <LoadingBlock v-if="healthLoading" type="text" :rows="6" />
+          <EmptyState
+            v-else-if="healthError"
+            title="资料完善度加载失败"
+            :description="healthError"
+            action-label="重新加载"
+            @action="loadHealth()"
+          />
+          <div v-else-if="!health?.items.length" class="px-5 py-12 text-center text-[11px] text-muted">
+            当前筛选下没有缺失项。
+          </div>
+          <div v-else class="divide-y divide-line">
+            <div
+              v-for="item in health.items"
+              :key="item.type + item.id"
+              class="flex flex-wrap items-center gap-x-4 gap-y-3 px-5 py-3.5"
+            >
+              <CoverArt :title="item.title" :src="item.preview" aspect="square" class="!w-12 shrink-0 !p-1.5" />
+              <div class="min-w-0 flex-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="tag !py-0.5">{{ item.category }}</span>
+                  <span class="truncate text-[13px]">{{ item.title }}</span>
+                </div>
+                <div class="mt-1 flex flex-wrap gap-1">
+                  <span
+                    v-for="field in item.missing"
+                    :key="field"
+                    class="tag !border-accent/30 !py-0.5 !text-[9px] !text-accent"
+                  >
+                    {{ field }}
+                  </span>
+                </div>
+              </div>
+              <span class="text-[9px] text-muted">{{ formatDate(item.updated_at) }}</span>
+              <button class="btn-ghost !min-h-7 !px-2.5 text-[10px]" @click="openHealthItem(item)">
+                去完善
+                <ArrowUpRight class="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+          <div
+            v-if="health && health.total > health.returned"
+            class="border-t border-line px-5 py-3 text-[10px] text-muted"
+          >
+            仅显示前 {{ health.returned }} 条，共 {{ health.total }} 条；请切换筛选缩小范围。
+          </div>
         </div>
       </section>
     </template>

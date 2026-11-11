@@ -71,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(s.requireAdmin)
 			r.Get("/overview", s.adminOverview)
+			r.Get("/data-health", s.adminDataHealth)
 			r.Post("/media/images", s.adminUploadImage)
 			r.Get("/sources", s.adminListSources)
 			r.Post("/sources", s.adminCreateSource)

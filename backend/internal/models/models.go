@@ -173,6 +173,65 @@ type EventDetail struct {
 	Contents []Content `json:"contents"`
 }
 
+// DataHealth summarizes completeness of editorial data. Every missing count is
+// computed from the same item set used by the filterable list, so the panel
+// totals and the rows it lists cannot drift apart.
+type DataHealth struct {
+	Counts   DataHealthCounts   `json:"counts"`
+	Coverage DataHealthCoverage `json:"coverage"`
+	Items    []DataHealthItem   `json:"items"`
+	Filter   string             `json:"filter"`
+	Total    int                `json:"total"`
+	Returned int                `json:"returned"`
+}
+
+type DataHealthCounts struct {
+	Artists                int `json:"artists"`
+	Works                  int `json:"works"`
+	Characters             int `json:"characters"`
+	PublishedContents      int `json:"published_contents"`
+	PublishedEvents        int `json:"published_events"`
+	MissingArtistAvatar    int `json:"missing_artist_avatar"`
+	MissingArtistCover     int `json:"missing_artist_cover"`
+	MissingWorkCover       int `json:"missing_work_cover"`
+	MissingCharacterAvatar int `json:"missing_character_avatar"`
+	MissingContentCover    int `json:"missing_content_cover"`
+	MissingEventCover      int `json:"missing_event_cover"`
+	MissingImages          int `json:"missing_images"`
+	MissingSummaries       int `json:"missing_summaries"`
+	MissingDates           int `json:"missing_dates"`
+	MissingRelations       int `json:"missing_relations"`
+	MissingSourceURLs      int `json:"missing_source_urls"`
+
+	// Numerators for coverage percentages; not part of the admin payload.
+	ArtistAvatars    int `json:"-"`
+	ArtistCovers     int `json:"-"`
+	WorkCovers       int `json:"-"`
+	CharacterAvatars int `json:"-"`
+	ContentCovers    int `json:"-"`
+	EventCovers      int `json:"-"`
+}
+
+type DataHealthCoverage struct {
+	ArtistAvatar    float64 `json:"artist_avatar"`
+	ArtistCover     float64 `json:"artist_cover"`
+	WorkCover       float64 `json:"work_cover"`
+	CharacterAvatar float64 `json:"character_avatar"`
+	ContentCover    float64 `json:"content_cover"`
+	EventCover      float64 `json:"event_cover"`
+}
+
+type DataHealthItem struct {
+	Type      string    `json:"type"`
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Category  string    `json:"category"`
+	Preview   string    `json:"preview"`
+	Missing   []string  `json:"missing"`
+	EditPath  string    `json:"edit_path"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type SearchProvider struct {
 	ID            string         `json:"id"`
 	Name          string         `json:"name"`

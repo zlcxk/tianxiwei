@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { CalendarDays, MapPin, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { api } from '../../api/client'
 import type { Event } from '../../types'
@@ -11,6 +12,7 @@ import ImagePicker from '../../components/ImagePicker.vue'
 import LoadingBlock from '../../components/LoadingBlock.vue'
 import Modal from '../../components/Modal.vue'
 
+const route = useRoute()
 const events = ref<Event[]>([])
 const loading = ref(true)
 const error = ref('')
@@ -125,7 +127,14 @@ function statusLabel(status: string): string {
   return statusOptions.find((s) => s.value === status)?.label || status
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  const edit = typeof route.query.edit === 'string' ? route.query.edit : ''
+  if (!edit) return
+  const event = events.value.find((item) => item.id === edit)
+  if (event) openEdit(event)
+  else toast.error('事件不存在，可能已被删除')
+})
 </script>
 
 <template>

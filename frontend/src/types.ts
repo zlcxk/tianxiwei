@@ -366,3 +366,53 @@ export interface MeResponse {
   csrf_token: string
   allow_registration: boolean
 }
+
+export type DataHealthFilter = 'all' | 'image' | 'summary' | 'date' | 'relation' | 'source_url'
+
+export interface DataHealthCounts {
+  artists: number
+  works: number
+  characters: number
+  published_contents: number
+  published_events: number
+  missing_artist_avatar: number
+  missing_artist_cover: number
+  missing_work_cover: number
+  missing_character_avatar: number
+  missing_content_cover: number
+  missing_event_cover: number
+  missing_images: number
+  missing_summaries: number
+  missing_dates: number
+  missing_relations: number
+  missing_source_urls: number
+}
+
+export interface DataHealthCoverage {
+  artist_avatar: number
+  artist_cover: number
+  work_cover: number
+  character_avatar: number
+  content_cover: number
+  event_cover: number
+}
+
+export interface DataHealthItem {
+  type: 'artist' | 'work' | 'character' | 'content' | 'event'
+  id: string
+  title: string
+  category: string
+  preview: string
+  missing: string[]
+  edit_path: string
+  updated_at: string
+}
+
+export interface DataHealth {
+  counts: DataHealthCounts
+  coverage: DataHealthCoverage
+  items: DataHealthItem[]
+  filter: DataHealthFilter
+  total: number
+  returned: number
+}
