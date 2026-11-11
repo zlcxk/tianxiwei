@@ -8,6 +8,8 @@ import type {
   CharacterDetail,
   Content,
   ContentFacets,
+  Event,
+  EventDetail,
   Paged,
   Scene,
   Work,
@@ -40,8 +42,12 @@ const platform = ref(queryString('platform'))
 const range = ref(queryString('range'))
 const workId = ref(queryString('work_id'))
 const characterId = ref(queryString('character_id'))
+const eventId = ref(queryString('event_id'))
 const contextWork = ref<Work | null>(null)
 const contextCharacter = ref<Character | null>(null)
+const contextEvent = ref<Event | null>(null)
+const workOptions = ref<Work[]>([])
+const eventOptions = ref<Event[]>([])
 
 const scenes = ref<Scene[]>([])
 const facets = ref<ContentFacets>({ platforms: [], content_types: [], source_types: [] })
@@ -58,6 +64,8 @@ const draftSourceType = ref('')
 const draftPlatform = ref('')
 const draftRange = ref('')
 const draftScenes = ref<string[]>([])
+const draftWorkId = ref('')
+const draftEventId = ref('')
 
 const activeCategory = computed<TimelineCategoriesItem>(
   () => timelineCategories.find((c) => c.key === category.value) ?? timelineCategories[0],
@@ -66,22 +74,39 @@ const hasMore = computed(() => Boolean(nextCursor.value))
 const activeFilterCount = computed(
   () =>
     [category.value !== 'all' ? category.value : '', sourceType.value, platform.value, range.value].filter(Boolean).length +
-    (selectedScenes.value.length ? 1 : 0),
+    (selectedScenes.value.length ? 1 : 0) +
+    (workId.value || characterId.value ? 1 : 0) +
+    (eventId.value ? 1 : 0),
 )
-const hasContext = computed(() => Boolean(workId.value || characterId.value))
-const contextLabel = computed(() => {
-  if (contextCharacter.value) {
-    return contextCharacter.value.work?.title
-      ? `${contextCharacter.value.name} · ${contextCharacter.value.work.title}`
-      : contextCharacter.value.name
+const contexts = computed(() => {
+  const items: { kind: string; label: string; to: { name: string; params: { id: string } } }[] = []
+  if (characterId.value) {
+    items.push({
+      kind: '角色',
+      label: contextCharacter.value
+        ? contextCharacter.value.work?.title
+          ? `${contextCharacter.value.name} · ${contextCharacter.value.work.title}`
+          : contextCharacter.value.name
+        : '相关内容',
+      to: { name: 'character', params: { id: characterId.value } },
+    })
+  } else if (workId.value) {
+    items.push({
+      kind: '作品',
+      label: contextWork.value?.title ?? '相关内容',
+      to: { name: 'work', params: { id: workId.value } },
+    })
   }
-  return contextWork.value?.title ?? '相关内容'
+  if (eventId.value) {
+    items.push({
+      kind: '活动',
+      label: contextEvent.value?.title ?? '相关内容',
+      to: { name: 'event', params: { id: eventId.value } },
+    })
+  }
+  return items
 })
-const contextKind = computed(() => (characterId.value ? '角色' : '作品'))
-const contextTo = computed(() => {
-  if (characterId.value) return { name: 'character', params: { id: characterId.value } }
-  return { name: 'work', params: { id: workId.value } }
-})
+const hasContext = computed(() => contexts.value.length > 0)
 
 const rangeOptions = [
   { value: '', label: '不限时间' },
@@ -106,6 +131,7 @@ function buildParams(cursor: string): string {
   if (range.value) params.set('range', range.value)
   if (workId.value) params.set('work_id', workId.value)
   if (characterId.value) params.set('character_id', characterId.value)
+  if (eventId.value) params.set('event_id', eventId.value)
   return params.toString()
 }
 
@@ -119,6 +145,7 @@ function syncURL() {
   if (range.value) query.range = range.value
   if (workId.value) query.work_id = workId.value
   if (characterId.value) query.character_id = characterId.value
+  if (eventId.value) query.event_id = eventId.value
   router.replace({ name: 'discover', query })
 }
 
@@ -167,6 +194,8 @@ function openFilters() {
   draftPlatform.value = platform.value
   draftRange.value = range.value
   draftScenes.value = [...selectedScenes.value]
+  draftWorkId.value = workId.value
+  draftEventId.value = eventId.value
   filterOpen.value = true
 }
 
@@ -175,9 +204,17 @@ async function applyFilters() {
   platform.value = draftPlatform.value
   range.value = draftRange.value
   selectedScenes.value = [...draftScenes.value]
+  if (draftWorkId.value !== workId.value) {
+    workId.value = draftWorkId.value
+    characterId.value = ''
+    contextWork.value = null
+    contextCharacter.value = null
+  }
+  eventId.value = draftEventId.value
   filterOpen.value = false
   syncURL()
   await load()
+  await loadContext()
 }
 
 async function clearFilters() {
@@ -188,8 +225,10 @@ async function clearFilters() {
   selectedScenes.value = []
   workId.value = ''
   characterId.value = ''
+  eventId.value = ''
   contextWork.value = null
   contextCharacter.value = null
+  contextEvent.value = null
   filterOpen.value = false
   syncURL()
   await load()
@@ -198,14 +237,16 @@ async function clearFilters() {
 async function clearContext() {
   workId.value = ''
   characterId.value = ''
+  eventId.value = ''
   contextWork.value = null
   contextCharacter.value = null
+  contextEvent.value = null
   syncURL()
   await load()
 }
 
 async function loadContext() {
-  if (characterId.value && !contextCharacter.value) {
+  if (characterId.value && contextCharacter.value?.id !== characterId.value) {
     try {
       const data = await api.get<CharacterDetail>(`/characters/${characterId.value}`)
       contextCharacter.value = data.character
@@ -213,12 +254,20 @@ async function loadContext() {
       contextCharacter.value = null
     }
   }
-  if (workId.value && !characterId.value && !contextWork.value) {
+  if (workId.value && !characterId.value && contextWork.value?.id !== workId.value) {
     try {
       const data = await api.get<WorkDetail>(`/works/${workId.value}`)
       contextWork.value = data.work
     } catch {
       contextWork.value = null
+    }
+  }
+  if (eventId.value && contextEvent.value?.id !== eventId.value) {
+    try {
+      const data = await api.get<EventDetail>(`/events/${eventId.value}`)
+      contextEvent.value = data.event
+    } catch {
+      contextEvent.value = null
     }
   }
 }
@@ -245,6 +294,18 @@ onMounted(async () => {
     facets.value = await api.get<ContentFacets>('/contents/facets')
   } catch {
     facets.value = { platforms: [], content_types: [], source_types: [] }
+  }
+  try {
+    const res = await api.get<{ items: Work[] }>('/works')
+    workOptions.value = res.items
+  } catch {
+    workOptions.value = []
+  }
+  try {
+    const res = await api.get<{ items: Event[] }>('/events')
+    eventOptions.value = res.items
+  } catch {
+    eventOptions.value = []
   }
 })
 </script>
@@ -288,14 +349,19 @@ onMounted(async () => {
 
     <div
       v-if="hasContext"
-      class="mt-4 flex items-center justify-between gap-3 border border-line bg-blush/25 px-4 py-3"
+      class="mt-4 flex flex-wrap items-center justify-between gap-3 border border-line bg-blush/25 px-4 py-3"
     >
-      <div class="flex min-w-0 items-center gap-3">
-        <span class="shrink-0 border border-accent/30 px-2 py-1 text-[9px] tracking-widest text-accent">{{ contextKind }}</span>
-        <div class="min-w-0">
-          <p class="text-[9px] uppercase tracking-widest text-muted">正在查看相关内容</p>
-          <RouterLink :to="contextTo" class="group inline-flex max-w-full items-center gap-1.5">
-            <span class="truncate font-display text-base leading-6 transition group-hover:text-accent">{{ contextLabel }}</span>
+      <div class="min-w-0 space-y-2">
+        <p class="text-[9px] uppercase tracking-widest text-muted">正在查看相关内容</p>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <RouterLink
+            v-for="ctx in contexts"
+            :key="`${ctx.kind}-${ctx.to.params.id}`"
+            :to="ctx.to"
+            class="group inline-flex min-w-0 items-center gap-2"
+          >
+            <span class="shrink-0 border border-accent/30 px-2 py-0.5 text-[9px] tracking-widest text-accent">{{ ctx.kind }}</span>
+            <span class="truncate font-display text-base leading-6 transition group-hover:text-accent">{{ ctx.label }}</span>
             <ArrowLeft class="h-3 w-3 shrink-0 text-muted transition group-hover:text-accent" />
           </RouterLink>
         </div>
@@ -374,7 +440,7 @@ onMounted(async () => {
       <p v-else-if="items.length" class="mt-8 text-center text-[11px] text-muted">已经到底了 · 共 {{ total }} 条</p>
     </div>
 
-    <Modal :open="filterOpen" title="筛选内容" description="按来源平台、时间与场景组合查看。" @close="filterOpen = false">
+    <Modal :open="filterOpen" title="筛选内容" description="按来源平台、时间、作品与活动组合查看。" @close="filterOpen = false">
       <div class="space-y-7">
         <div>
           <div class="field-label">来源平台</div>
@@ -426,6 +492,23 @@ onMounted(async () => {
             </button>
           </div>
         </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label for="filter-work" class="field-label">关联作品</label>
+            <select id="filter-work" v-model="draftWorkId" class="select-field">
+              <option value="">全部作品</option>
+              <option v-for="work in workOptions" :key="work.id" :value="work.id">{{ work.title }}</option>
+            </select>
+          </div>
+          <div>
+            <label for="filter-event" class="field-label">关联活动</label>
+            <select id="filter-event" v-model="draftEventId" class="select-field">
+              <option value="">全部活动</option>
+              <option v-for="event in eventOptions" :key="event.id" :value="event.id">{{ event.title }}</option>
+            </select>
+          </div>
+        </div>
+        <p class="text-[10px] leading-5 text-muted">选择作品会替换当前角色上下文；活动可以与作品同时筛选。</p>
         <div>
           <div class="field-label">饭圈场景</div>
           <div class="flex flex-wrap gap-2">

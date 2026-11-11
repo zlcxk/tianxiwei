@@ -116,6 +116,10 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/events", s.adminCreateEvent)
 			r.Put("/events/{id}", s.adminUpdateEvent)
 			r.Delete("/events/{id}", s.adminDeleteEvent)
+			r.Get("/editorial-picks", s.adminListEditorialPicks)
+			r.Post("/editorial-picks", s.adminCreateEditorialPick)
+			r.Put("/editorial-picks/{id}", s.adminUpdateEditorialPick)
+			r.Delete("/editorial-picks/{id}", s.adminDeleteEditorialPick)
 		})
 	})
 	return r

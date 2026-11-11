@@ -132,6 +132,21 @@ export interface Content {
   raw_data?: unknown
 }
 
+export interface EditorialPick {
+  id: string
+  content_id: string
+  title: string
+  description: string
+  cover_url: string
+  sort_order: number
+  starts_at: string | null
+  ends_at: string | null
+  enabled: boolean
+  created_at: string
+  updated_at: string
+  content?: Content
+}
+
 export interface HomeData {
   artist: Artist
   scenes: Scene[]
@@ -139,6 +154,8 @@ export interface HomeData {
   latest: Content[]
   for_you: Content[]
   featured: Content[]
+  picks: EditorialPick[]
+  archive: Content[]
   works: Work[]
   brief: {
     date: string

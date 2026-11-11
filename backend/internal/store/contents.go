@@ -701,6 +701,16 @@ func (s *Store) Home(ctx context.Context, userID string) (models.HomeData, error
 	if err != nil {
 		return models.HomeData{}, err
 	}
+	picks, err := s.ActiveEditorialPicks(ctx, 8)
+	if err != nil {
+		return models.HomeData{}, err
+	}
+	s.AttachEditorialPickContent(ctx, picks, userID, false)
+	archiveCutoff := time.Now().AddDate(0, -6, 0)
+	archive, _, err := s.ListContents(ctx, ContentFilter{ArtistID: artist.ID, EndTime: &archiveCutoff, Limit: 3})
+	if err != nil {
+		return models.HomeData{}, err
+	}
 	works, err := s.ListWorks(ctx, artist.ID, "")
 	if err != nil {
 		return models.HomeData{}, err
@@ -719,8 +729,9 @@ func (s *Store) Home(ctx context.Context, userID string) (models.HomeData, error
 	_ = s.markContentFavorites(ctx, userID, latest)
 	_ = s.markContentFavorites(ctx, userID, forYou)
 	_ = s.markContentFavorites(ctx, userID, featured)
+	_ = s.markContentFavorites(ctx, userID, archive)
 	return models.HomeData{
 		Artist: artist, Scenes: scenes, DefaultScene: defaultScene,
-		Latest: latest, ForYou: forYou, Featured: featured, Works: works, Brief: brief,
+		Latest: latest, ForYou: forYou, Featured: featured, Picks: picks, Archive: archive, Works: works, Brief: brief,
 	}, nil
 }

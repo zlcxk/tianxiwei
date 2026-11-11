@@ -19,6 +19,7 @@ import AdminReviewsView from '../views/admin/AdminReviewsView.vue'
 import AdminSourcesView from '../views/admin/AdminSourcesView.vue'
 import AdminDiscoveryView from '../views/admin/AdminDiscoveryView.vue'
 import AdminEventsView from '../views/admin/AdminEventsView.vue'
+import AdminEditorialView from '../views/admin/AdminEditorialView.vue'
 import AdminJobsView from '../views/admin/AdminJobsView.vue'
 import AdminBaseDataView from '../views/admin/AdminBaseDataView.vue'
 import { auth, ensureBootstrap, isAdmin } from '../stores/auth'
@@ -60,6 +61,7 @@ const router = createRouter({
         { path: 'sources', name: 'admin-sources', component: AdminSourcesView, meta: { title: '数据源', requiresAdmin: true } },
         { path: 'discovery', name: 'admin-discovery', component: AdminDiscoveryView, meta: { title: '内容发现', requiresAdmin: true } },
         { path: 'events', name: 'admin-events', component: AdminEventsView, meta: { title: '事件管理', requiresAdmin: true } },
+        { path: 'editorial', name: 'admin-editorial', component: AdminEditorialView, meta: { title: '编辑精选', requiresAdmin: true } },
         { path: 'jobs', name: 'admin-jobs', component: AdminJobsView, meta: { title: '采集任务', requiresAdmin: true } },
         { path: 'base', name: 'admin-base', component: AdminBaseDataView, meta: { title: '基础资料', requiresAdmin: true } },
       ],

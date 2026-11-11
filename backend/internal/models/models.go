@@ -288,14 +288,34 @@ type DailyBrief struct {
 }
 
 type HomeData struct {
-	Artist       Artist     `json:"artist"`
-	Scenes       []Scene    `json:"scenes"`
-	DefaultScene string     `json:"default_scene"`
-	Latest       []Content  `json:"latest"`
-	ForYou       []Content  `json:"for_you"`
-	Featured     []Content  `json:"featured"`
-	Works        []Work     `json:"works"`
-	Brief        DailyBrief `json:"brief"`
+	Artist       Artist          `json:"artist"`
+	Scenes       []Scene         `json:"scenes"`
+	DefaultScene string          `json:"default_scene"`
+	Latest       []Content       `json:"latest"`
+	ForYou       []Content       `json:"for_you"`
+	Featured     []Content       `json:"featured"`
+	Picks        []EditorialPick `json:"picks"`
+	Archive      []Content       `json:"archive"`
+	Works        []Work          `json:"works"`
+	Brief        DailyBrief      `json:"brief"`
+}
+
+// EditorialPick curates an already published content item for the home page.
+// Title, description and cover are optional overrides; empty values fall back
+// to the referenced content.
+type EditorialPick struct {
+	ID          string     `json:"id"`
+	ContentID   string     `json:"content_id"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	CoverURL    string     `json:"cover_url"`
+	SortOrder   int        `json:"sort_order"`
+	StartsAt    *time.Time `json:"starts_at"`
+	EndsAt      *time.Time `json:"ends_at"`
+	Enabled     bool       `json:"enabled"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	Content     *Content   `json:"content,omitempty"`
 }
 
 type CharacterDetail struct {

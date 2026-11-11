@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   LogOut,
   RefreshCw,
+  Star,
   X,
 } from 'lucide-vue-next'
 import { api } from '../../api/client'
@@ -28,6 +29,7 @@ const nav = [
   { to: '/admin/reviews', label: '待审核', icon: ClipboardCheck, exact: false, badge: true },
   { to: '/admin/discovery', label: '内容发现', icon: Compass, exact: false },
   { to: '/admin/events', label: '事件管理', icon: CalendarDays, exact: false },
+  { to: '/admin/editorial', label: '编辑精选', icon: Star, exact: false },
   { to: '/admin/sources', label: '数据源', icon: Database, exact: false },
   { to: '/admin/jobs', label: '采集任务', icon: RefreshCw, exact: false },
   { to: '/admin/base', label: '基础资料', icon: Files, exact: false },
