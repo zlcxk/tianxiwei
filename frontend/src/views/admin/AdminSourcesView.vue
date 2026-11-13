@@ -430,7 +430,7 @@ onMounted(load)
             <span>
               引用来源图片
               <span class="block text-[10px] leading-5 text-muted">
-                默认关闭。仅在你已确认该来源图片拥有展示授权时开启；否则条目将使用站内抽象封面。
+                默认关闭。开启后会保存来源条目中的图片地址；建议只对图片稳定、清晰的来源开启，否则条目将使用站内抽象封面。
               </span>
             </span>
           </label>

@@ -79,7 +79,7 @@ func (a *RSSAdapter) Fetch(ctx context.Context, _ string) ([]RawItem, string, er
 		if item.Author != nil {
 			author = item.Author.Name
 		}
-		// 第三方图片默认不落地展示；只有管理员在来源配置中显式授权后才引用。
+		// 来源图片默认不保存；管理员可在来源配置中开启后引用图片地址。
 		cover := ""
 		if a.useFeedImages {
 			if item.Image != nil {

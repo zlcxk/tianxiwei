@@ -11,8 +11,10 @@ const props = withDefaults(
     tone?: number
     /** Above-the-fold images load eagerly and at high priority. */
     priority?: boolean
+    /** Small thumbnails keep the colour block and glyph, without title copy. */
+    compact?: boolean
   }>(),
-  { subtitle: '', meta: '', aspect: 'square', src: '', tone: undefined, priority: false },
+  { subtitle: '', meta: '', aspect: 'square', src: '', tone: undefined, priority: false, compact: false },
 )
 
 // A broken remote image must fall back to the editorial template instead of
@@ -77,18 +79,19 @@ const initial = computed(() => props.title.trim().slice(0, 1) || '曦')
     />
     <template v-else>
       <div class="relative z-10 flex items-start justify-between gap-2">
-        <span class="text-[9px] uppercase leading-none tracking-[0.18em] opacity-70">Xiwei Archive</span>
+        <span class="text-[10px] uppercase leading-none tracking-[0.18em] opacity-70">Xiwei Archive</span>
         <span class="h-1 w-1 rounded-full bg-current opacity-40" />
       </div>
       <span
-        class="pointer-events-none absolute -right-3 top-8 z-0 font-display text-[104px] leading-none opacity-[0.13]"
+        class="pointer-events-none absolute z-0 font-display leading-none opacity-[0.13]"
+        :class="compact ? '-right-1 top-1/4 text-[72px]' : '-right-3 top-8 text-[104px]'"
         aria-hidden="true"
       >{{ initial }}</span>
-      <div class="relative z-10">
+      <div v-if="!compact" class="relative z-10">
         <span class="mb-1.5 block h-px w-6" :style="{ background: palette.line }" />
-        <div v-if="subtitle" class="mb-1 text-[9px] uppercase tracking-[0.16em] opacity-75">{{ subtitle }}</div>
+        <div v-if="subtitle" class="mb-1 text-[10px] uppercase tracking-[0.16em] opacity-75">{{ subtitle }}</div>
         <div class="font-display text-[17px] leading-[1.2] tracking-tight">{{ title }}</div>
-        <div v-if="meta" class="mt-1.5 text-[9px] tracking-wide opacity-70">{{ meta }}</div>
+        <div v-if="meta" class="mt-1.5 text-[10px] tracking-wide opacity-70">{{ meta }}</div>
       </div>
     </template>
   </div>

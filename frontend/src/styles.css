@@ -35,7 +35,7 @@
   }
 
   :focus-visible {
-    outline: 2px solid #c98791;
+    outline: 2px solid #8f4c56;
     outline-offset: 3px;
   }
 
@@ -47,7 +47,7 @@
   }
 
   input[type='range'] {
-    accent-color: #c98791;
+    accent-color: #8f4c56;
   }
 }
 
@@ -61,7 +61,7 @@
   }
 
   .eyebrow {
-    @apply text-[10px] font-medium uppercase tracking-widest2 text-muted;
+    @apply text-[11px] font-medium uppercase tracking-widest2 text-muted;
   }
 
   .display-title {
@@ -77,7 +77,7 @@
   }
 
   .btn-accent {
-    @apply btn bg-accent text-white hover:bg-[#b97782];
+    @apply btn bg-accent text-white hover:bg-[#7c3f48];
   }
 
   .btn-ghost {
@@ -97,7 +97,7 @@
   }
 
   .tag-accent {
-    @apply inline-flex items-center gap-1 border border-accent/25 bg-blush/60 px-2.5 py-1 text-[11px] leading-none text-[#8f5e66];
+    @apply inline-flex items-center gap-1 border border-accent/25 bg-blush/60 px-2.5 py-1 text-[11px] leading-none text-accent-deep;
   }
 
   .field-label {
@@ -110,7 +110,7 @@
 
   .select-field {
     @apply field appearance-none bg-[right_0.9rem_center] bg-no-repeat pr-9;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%2391898A' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%236E6460' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E");
   }
 
   .skeleton {

@@ -165,7 +165,7 @@ watch(() => auth.user?.id, loadPrefs)
       </section>
 
       <p class="mt-8 text-[10px] leading-6 text-muted">
-        本应用仅面向艺人公开信息整理，不提供非公开行程、私人信息或未授权影像。
+        本应用仅面向艺人公开信息整理，不提供非公开行程、私人信息或非公开影像。
       </p>
     </template>
 

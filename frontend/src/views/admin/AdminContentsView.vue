@@ -690,7 +690,7 @@ onMounted(async () => {
           <ImagePicker
             id="content-cover"
             v-model="form.cover_url"
-            label="封面（可选，需已获授权）"
+            label="封面（可选）"
             aspect="wide"
             hint="16:10 或 1:1 内容封面；留空则使用站内抽象封面"
           />

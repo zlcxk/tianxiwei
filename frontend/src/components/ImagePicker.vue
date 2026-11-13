@@ -27,13 +27,41 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
 const error = ref('')
 const failed = ref(false)
+const sizeWarning = ref('')
 
 watch(
   () => props.modelValue,
   () => {
     failed.value = false
+    sizeWarning.value = ''
   },
 )
+
+const recommended = computed(
+  () =>
+    ({
+      square: { w: 800, h: 800 },
+      portrait: { w: 900, h: 1200 },
+      wide: { w: 1200, h: 675 },
+    })[props.aspect],
+)
+
+/** Read natural pixel size so small uploads can be flagged before they go live. */
+function readImageSize(file: File) {
+  return new Promise<{ w: number; h: number } | null>((resolve) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      resolve({ w: img.naturalWidth, h: img.naturalHeight })
+      URL.revokeObjectURL(url)
+    }
+    img.onerror = () => {
+      resolve(null)
+      URL.revokeObjectURL(url)
+    }
+    img.src = url
+  })
+}
 
 const aspectClass = computed(
   () =>
@@ -61,6 +89,11 @@ async function onFileChange(event: Event) {
   if (file.size > 10 * 1024 * 1024) {
     error.value = '图片不能超过 10MB'
     return
+  }
+  sizeWarning.value = ''
+  const dims = await readImageSize(file)
+  if (dims && (dims.w < recommended.value.w || dims.h < recommended.value.h)) {
+    sizeWarning.value = `图片尺寸 ${dims.w}×${dims.h}，建议至少 ${recommended.value.w}×${recommended.value.h}，否则可能影响清晰度`
   }
   uploading.value = true
   try {
@@ -137,10 +170,13 @@ function clearImage() {
             <Trash2 class="h-3.5 w-3.5" />
             清除
           </button>
-          <span class="text-[10px] text-muted">JPEG / PNG / WebP，≤10MB</span>
+          <span class="text-[10px] text-muted">JPEG / PNG / WebP，≤10MB · 建议 ≥{{ recommended.w }}×{{ recommended.h }}</span>
         </div>
         <p v-if="error" class="text-[11px] leading-5 text-[#a13d3d]">{{ error }}</p>
-        <p v-else-if="hint" class="text-[10px] leading-5 text-muted">{{ hint }}</p>
+        <p v-else-if="sizeWarning" class="text-[11px] leading-5 text-[#8a6a3a]">{{ sizeWarning }}</p>
+        <p v-else class="text-[10px] leading-5 text-muted">
+          {{ hint || '建议使用与展示对象对应的官方原图，主体居中；上传后按容器比例裁切。' }}
+        </p>
         <input
           ref="fileInput"
           type="file"

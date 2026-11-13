@@ -281,6 +281,19 @@ watch(keyword, () => {
   }, 380)
 })
 
+// The global search dialog can navigate to /discover?keyword=... while this
+// view is already mounted. Keep the input in sync with the route in that case.
+watch(
+  () => route.query.keyword,
+  (value) => {
+    const next = typeof value === 'string' ? value : ''
+    if (next !== keyword.value) {
+      clearTimeout(searchTimer)
+      keyword.value = next
+    }
+  },
+)
+
 onMounted(async () => {
   load()
   loadContext()

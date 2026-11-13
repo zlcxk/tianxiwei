@@ -89,7 +89,7 @@ ON CONFLICT (work_id, name) DO NOTHING;
 
 -- ---------------------------------------------------------------------------
 -- 真实公开活动 / 作品节点。事件只做聚合，不改变内容时间线。
--- 标题相同的事件不会重复插入；封面留空，由管理员按授权补充。
+-- 标题相同的事件不会重复插入；封面留空，由管理员上传或填写。
 -- ---------------------------------------------------------------------------
 INSERT INTO events (artist_id, title, summary, event_date, location, status)
 SELECT a.id, v.title, v.summary, v.event_date, v.location, 'published'

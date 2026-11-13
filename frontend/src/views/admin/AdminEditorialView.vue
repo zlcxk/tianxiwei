@@ -394,7 +394,7 @@ onMounted(load)
             <ImagePicker
               id="pick-cover"
               v-model="form.cover_url"
-              label="封面（可选，需已获授权）"
+              label="封面（可选）"
               aspect="wide"
               hint="16:9 精选配图；留空则使用内容封面或站内抽象封面"
             />

@@ -4,14 +4,16 @@ export default {
   theme: {
     extend: {
       colors: {
-        canvas: '#FAF8F6',
-        card: '#FFFFFF',
-        accent: '#C98791',
+        canvas: '#FAF7F2',
+        card: '#FFFDF9',
+        accent: '#8F4C56',
+        'accent-soft': '#B06B74',
+        'accent-deep': '#8F4C56',
         blush: '#F2DFE1',
-        ink: '#302B2C',
-        muted: '#91898A',
-        line: '#EEE9E8',
-        moss: '#7C8876',
+        ink: '#2E292A',
+        muted: '#6E6460',
+        line: '#E4DCD3',
+        moss: '#6F7A67',
         sand: '#D8C3A5',
       },
       fontFamily: {

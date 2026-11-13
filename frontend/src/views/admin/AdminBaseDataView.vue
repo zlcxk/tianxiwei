@@ -746,14 +746,14 @@ onMounted(async () => {
             <ImagePicker
               id="artist-avatar"
               v-model="artistForm.avatar"
-              label="头像（需授权）"
+              label="头像"
               aspect="square"
               hint="1:1 头像，建议 800×800 以上；留空使用站内视觉"
             />
             <ImagePicker
               id="artist-cover"
               v-model="artistForm.cover"
-              label="封面（需授权）"
+              label="封面"
               aspect="wide"
               hint="16:9 主视觉，用于首页杂志感人物区；留空使用站内版式"
             />
@@ -1188,7 +1188,7 @@ onMounted(async () => {
           <ImagePicker
             id="work-cover"
             v-model="workForm.cover"
-            label="作品封面（需授权）"
+            label="作品封面"
             aspect="portrait"
             hint="3:4 竖版海报；留空使用站内抽象封面"
           />
@@ -1223,7 +1223,7 @@ onMounted(async () => {
         <ImagePicker
           id="char-avatar"
           v-model="characterForm.avatar"
-          label="角色头像（可选，需授权）"
+          label="角色头像（可选）"
           aspect="square"
           hint="1:1 角色剧照或头像；请勿使用与角色无关的图片"
         />

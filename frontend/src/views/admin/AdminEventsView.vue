@@ -255,7 +255,7 @@ onMounted(async () => {
           <ImagePicker
             id="event-cover"
             v-model="form.cover_url"
-            label="封面（可选，需已获授权）"
+            label="封面（可选）"
             aspect="wide"
             hint="16:9 活动主视觉；留空则使用站内抽象封面"
           />
